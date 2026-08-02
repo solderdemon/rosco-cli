@@ -1,0 +1,28 @@
+# Copy this file to rosco.toml in a rosco_m68k application directory.
+
+[project]
+# software.mk normally produces <directory-name>.bin. Set this when your
+# Makefile uses a different output path.
+# artifact = "build/hello.bin"
+
+[build]
+program = "make"
+args = ["all"]
+clean_args = ["clean"]
+working_directory = "."
+
+# Values are passed only to the build process.
+# [build.environment]
+# ROSCO_M68K_DIR = "../rosco_m68k"
+
+[serial]
+# Leave port unset to auto-select when exactly one USB UART is present.
+# Linux example: port = "/dev/ttyUSB0"
+# Windows example: port = "COM3"
+baud = 38400
+read_timeout_ms = 50
+
+[upload]
+max_retries = 6
+packet_timeout_ms = 5000
+

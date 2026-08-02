@@ -1,0 +1,22 @@
+# Rust build output
+/target/
+
+# rosco_m68k build artifacts
+*.bin
+*.dis
+*.elf
+*.map
+*.sym
+*.o
+
+# Local rosco configuration
+/rosco.toml
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
