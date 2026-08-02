@@ -126,11 +126,11 @@ fn upload(port: &mut dyn SerialPort, file: &Path, config: &Config) -> Result<()>
 }
 
 fn show_progress(progress: &TransferProgress, last_percent: &mut Option<usize>) {
-    let percent = if progress.total == 0 {
-        100
-    } else {
-        progress.sent.saturating_mul(100) / progress.total
-    };
+    let percent = progress
+        .sent
+        .saturating_mul(100)
+        .checked_div(progress.total)
+        .unwrap_or(100);
     if *last_percent != Some(percent) {
         eprint!(
             "\rUploading {}: {:>3}% ({}/{})",
