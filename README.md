@@ -33,7 +33,8 @@ Run these commands from an application that includes rosco_m68k's
 
 ```sh
 rosco doctor
-rosco ports
+rosco ports                 # show USB-UART candidates
+rosco ports --all           # include built-in/non-USB serial ports
 rosco build
 rosco upload --port /dev/ttyUSB0
 rosco monitor --port /dev/ttyUSB0
@@ -80,11 +81,18 @@ clean_args = ["clean"]
 - `rosco upload [FILE]` — transfer a binary using the built-in Kermit sender.
 - `rosco monitor` — stream raw UART output to stdout until Ctrl-C.
 - `rosco run [--clean]` — build, upload, and monitor through one open port.
-- `rosco ports` — list serial ports and USB VID/PID information.
+- `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
+  `--all` also shows built-in and non-USB serial ports.
 - `rosco doctor` — check the builder, C cross-toolchain, and UART discovery.
 
 See [Architecture](docs/architecture.md) for module boundaries and extension
 points.
+
+When `--port` is omitted, `upload`, `monitor`, and `run` automatically select a
+single USB-UART device even if Linux reports many built-in `/dev/ttyS*` ports.
+USB identifiers describe the adapter rather than the computer connected to its
+UART pins, so multiple USB-UART devices still require `--port` or a configured
+`serial.port`.
 
 ## Development
 
@@ -96,4 +104,3 @@ cargo clippy --all-targets -- -D warnings
 
 CI builds and tests native binaries on Linux x64, Linux ARM64, Windows x64, and
 Windows ARM64.
-

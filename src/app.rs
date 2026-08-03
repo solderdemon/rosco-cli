@@ -49,7 +49,7 @@ pub fn run(cli: Cli) -> Result<()> {
             upload(&mut *port, &output.artifact, &config)?;
             serial::monitor(port)?;
         }
-        RoscoCommand::Ports => print_ports()?,
+        RoscoCommand::Ports(args) => print_ports(args.all)?,
         RoscoCommand::Doctor => doctor(&config)?,
     }
     Ok(())
@@ -75,28 +75,35 @@ fn serial_settings(config: &Config, args: &SerialArgs) -> Result<(String, u32)> 
 
 fn auto_detect_port() -> Result<String> {
     let ports = serial::list_ports()?;
-    let usb: Vec<_> = ports
-        .iter()
-        .filter(|port| port.kind.starts_with("USB"))
-        .collect();
-    if usb.len() == 1 {
-        eprintln!("Auto-detected {} ({})", usb[0].name, usb[0].kind);
-        return Ok(usb[0].name.clone());
-    }
-    if ports.len() == 1 {
-        eprintln!("Auto-detected {} ({})", ports[0].name, ports[0].kind);
-        return Ok(ports[0].name.clone());
-    }
+    auto_detect_port_from(&ports)
+}
+
+fn auto_detect_port_from(ports: &[serial::PortSummary]) -> Result<String> {
     if ports.is_empty() {
         bail!("no serial ports found; connect a UART adapter or pass --port");
     }
 
-    let choices = ports
+    let usb: Vec<_> = ports.iter().filter(|port| port.is_usb).collect();
+    let candidates: Vec<_> = if usb.is_empty() {
+        ports.iter().collect()
+    } else {
+        usb
+    };
+
+    if candidates.len() == 1 {
+        eprintln!(
+            "Auto-detected {} ({})",
+            candidates[0].name, candidates[0].kind
+        );
+        return Ok(candidates[0].name.clone());
+    }
+
+    let choices = candidates
         .iter()
         .map(|port| format!("{} ({})", port.name, port.kind))
         .collect::<Vec<_>>()
         .join(", ");
-    bail!("multiple serial ports found; pass --port. Available: {choices}")
+    bail!("multiple candidate serial ports found; pass --port. Available: {choices}")
 }
 
 fn open_configured_port(config: &Config, name: &str, baud: u32) -> Result<Box<dyn SerialPort>> {
@@ -140,14 +147,33 @@ fn show_progress(progress: &TransferProgress, last_percent: &mut Option<usize>) 
     }
 }
 
-fn print_ports() -> Result<()> {
+fn print_ports(show_all: bool) -> Result<()> {
     let ports = serial::list_ports()?;
     if ports.is_empty() {
         println!("No serial ports found.");
-    } else {
-        for port in ports {
-            println!("{:<20} {}", port.name, port.kind);
-        }
+        return Ok(());
+    }
+
+    let visible: Vec<_> = ports
+        .iter()
+        .filter(|port| show_all || port.is_usb)
+        .collect();
+    if visible.is_empty() {
+        println!(
+            "No USB serial ports found ({} non-USB port(s) hidden; use --all to show them).",
+            ports.len()
+        );
+        return Ok(());
+    }
+
+    for port in &visible {
+        println!("{:<20} {}", port.name, port.kind);
+    }
+    if !show_all && visible.len() == 1 {
+        println!(
+            "\nAuto-selected when --port is omitted: {}",
+            visible[0].name
+        );
     }
     Ok(())
 }
@@ -161,7 +187,17 @@ fn doctor(config: &Config) -> Result<()> {
 
     match serial::list_ports() {
         Ok(ports) if ports.is_empty() => println!("[WARN] UART: no serial ports found"),
-        Ok(ports) => println!("[ OK ] UART: {} serial port(s) found", ports.len()),
+        Ok(ports) => {
+            let usb_count = ports.iter().filter(|port| port.is_usb).count();
+            if usb_count == 0 {
+                println!(
+                    "[WARN] UART: no USB serial ports found ({} non-USB port(s) ignored)",
+                    ports.len()
+                );
+            } else {
+                println!("[ OK ] UART: {usb_count} USB serial port(s) found");
+            }
+        }
         Err(error) => println!("[WARN] UART: {error:#}"),
     }
 
@@ -187,4 +223,42 @@ fn probe_command(program: &str) -> bool {
 fn print_check(label: &str, program: &str, available: bool) {
     let status = if available { " OK " } else { "WARN" };
     println!("[{status}] {label}: {program}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn port(name: &str, kind: &str, is_usb: bool) -> serial::PortSummary {
+        serial::PortSummary {
+            name: name.into(),
+            kind: kind.into(),
+            is_usb,
+        }
+    }
+
+    #[test]
+    fn auto_detection_ignores_linux_builtin_ports_when_one_usb_port_exists() {
+        let ports = [
+            port("/dev/ttyS0", "PCI", false),
+            port("/dev/ttyS1", "PCI", false),
+            port("/dev/ttyUSB0", "USB 0403:6001", true),
+        ];
+
+        assert_eq!(auto_detect_port_from(&ports).unwrap(), "/dev/ttyUSB0");
+    }
+
+    #[test]
+    fn auto_detection_only_lists_usb_candidates_when_there_are_several() {
+        let ports = [
+            port("/dev/ttyS0", "PCI", false),
+            port("/dev/ttyUSB0", "USB 0403:6001", true),
+            port("/dev/ttyACM0", "USB 10c4:ea60", true),
+        ];
+
+        let error = auto_detect_port_from(&ports).unwrap_err().to_string();
+        assert!(error.contains("/dev/ttyUSB0"));
+        assert!(error.contains("/dev/ttyACM0"));
+        assert!(!error.contains("/dev/ttyS0"));
+    }
 }

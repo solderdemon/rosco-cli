@@ -8,6 +8,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType, Stop
 pub struct PortSummary {
     pub name: String,
     pub kind: String,
+    pub is_usb: bool,
 }
 
 pub fn list_ports() -> Result<Vec<PortSummary>> {
@@ -15,17 +16,24 @@ pub fn list_ports() -> Result<Vec<PortSummary>> {
     Ok(ports
         .into_iter()
         .map(|port| {
-            let kind = match port.port_type {
+            let (kind, is_usb) = match port.port_type {
                 SerialPortType::UsbPort(usb) => {
-                    format!("USB {:04x}:{:04x}", usb.vid, usb.pid)
+                    let mut details = vec![format!("USB {:04x}:{:04x}", usb.vid, usb.pid)];
+                    details.extend(usb.manufacturer.filter(|value| !value.is_empty()));
+                    details.extend(usb.product.filter(|value| !value.is_empty()));
+                    if let Some(serial) = usb.serial_number.filter(|value| !value.is_empty()) {
+                        details.push(format!("serial {serial}"));
+                    }
+                    (details.join(" · "), true)
                 }
-                SerialPortType::BluetoothPort => "Bluetooth".into(),
-                SerialPortType::PciPort => "PCI".into(),
-                SerialPortType::Unknown => "Serial".into(),
+                SerialPortType::BluetoothPort => ("Bluetooth".into(), false),
+                SerialPortType::PciPort => ("PCI".into(), false),
+                SerialPortType::Unknown => ("Serial".into(), false),
             };
             PortSummary {
                 name: port.port_name,
                 kind,
+                is_usb,
             }
         })
         .collect())

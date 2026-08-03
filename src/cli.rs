@@ -24,8 +24,8 @@ pub enum RoscoCommand {
     Monitor(MonitorArgs),
     /// Build, upload, and then display UART output.
     Run(RunArgs),
-    /// List serial ports visible to the host.
-    Ports,
+    /// List USB serial ports that may be connected to rosco_m68k.
+    Ports(PortsArgs),
     /// Check the local build toolchain and UART setup.
     Doctor,
 }
@@ -62,6 +62,13 @@ pub struct RunArgs {
     pub serial: SerialArgs,
 }
 
+#[derive(Debug, Args)]
+pub struct PortsArgs {
+    /// Include built-in and non-USB serial ports such as /dev/ttyS*.
+    #[arg(long)]
+    pub all: bool,
+}
+
 #[derive(Clone, Debug, Default, Args)]
 pub struct SerialArgs {
     /// Serial device, for example /dev/ttyUSB0 or COM3.
@@ -92,5 +99,20 @@ mod tests {
         assert!(args.clean);
         assert_eq!(args.serial.port.as_deref(), Some("COM3"));
         assert_eq!(args.serial.baud, Some(38_400));
+    }
+
+    #[test]
+    fn ports_hides_non_usb_devices_unless_all_is_requested() {
+        let cli = Cli::try_parse_from(["rosco", "ports"]).unwrap();
+        let RoscoCommand::Ports(args) = cli.command else {
+            panic!("expected ports command");
+        };
+        assert!(!args.all);
+
+        let cli = Cli::try_parse_from(["rosco", "ports", "--all"]).unwrap();
+        let RoscoCommand::Ports(args) = cli.command else {
+            panic!("expected ports command");
+        };
+        assert!(args.all);
     }
 }
