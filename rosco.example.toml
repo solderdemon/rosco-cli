@@ -6,10 +6,16 @@
 # artifact = "build/hello.bin"
 
 [build]
+# `make` runs inside Docker; no m68k compiler is needed on the host.
 program = "make"
 args = ["all"]
 clean_args = ["clean"]
 working_directory = "."
+
+[build.docker]
+image = "roscopeco/rosco_m68k:latest"
+# On ARM hosts, uncomment this to run the published amd64 image through emulation.
+# platform = "linux/amd64"
 
 # Values are passed only to the build process.
 # [build.environment]
@@ -25,4 +31,3 @@ read_timeout_ms = 50
 [upload]
 max_retries = 6
 packet_timeout_ms = 5000
-

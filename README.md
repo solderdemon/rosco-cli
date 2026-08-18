@@ -22,9 +22,11 @@ Cargo installs a binary named `rosco`. Make sure Cargo's binary directory
 (`$HOME/.cargo/bin` on Linux or `%USERPROFILE%\.cargo\bin` on Windows) is on
 `PATH`.
 
-For building rosco_m68k applications, the configured builder and the upstream
-cross-toolchain must also be on `PATH`. Defaults follow upstream conventions:
-GNU Make and `m68k-elf-rosco-gcc`.
+`rosco build` and `rosco run` ask where to build: Docker (recommended) or the
+local computer. Docker runs GNU Make in `roscopeco/rosco_m68k:latest`, which
+contains the complete cross-toolchain. A local build checks for its toolchain
+and, with explicit confirmation, installs the required Homebrew packages on
+Linux and macOS.
 
 ## Typical workflow
 
@@ -60,20 +62,39 @@ rosco -C examples/hello run --port COM3
 
 Configuration is optional. Without `rosco.toml`, the CLI runs `make all` and
 expects `<project-directory>.bin`, matching rosco_m68k's `software.mk`.
+When Docker is selected, the project directory is mounted below `/workspace`
+with its original directory name. This preserves rosco_m68k's default artifact
+name (`<project-directory>.bin`). Generated files stay on the host and, on
+Unix, retain the project directory's ownership. If the configured Docker image
+is absent, `rosco` pulls it before starting the build.
 
 Copy [rosco.example.toml](rosco.example.toml) to `rosco.toml` when the project
-needs a custom artifact, builder, working directory, environment, or serial
+needs a custom artifact, builder, working directory, Docker image, environment, or serial
 settings. CLI `--port` and `--baud` values override configuration.
 
-On Windows, a project can select another Make executable without changing CLI
-code:
+The builder command is used in both modes. Docker settings apply when Docker
+is selected:
 
 ```toml
 [build]
-program = "mingw32-make"
+program = "make"
 args = ["all"]
 clean_args = ["clean"]
+
+[build.docker]
+image = "roscopeco/rosco_m68k:latest"
 ```
+
+On ARM hosts, set `build.docker.platform = "linux/amd64"` when using the
+published image. Docker will use emulation if necessary.
+
+For a local build, `rosco` checks the configured builder plus
+`m68k-elf-rosco-gcc`. If either is missing, it asks before installing Homebrew
+and the rosco_m68k toolchain, Make, Git, Python, vasm, and srecord. Automatic
+installation is intentionally not offered on Windows; select Docker there.
+
+To use the image built from your local `rosco_m68k_docker` fork, build it with
+its `make image` target and set `image = "rosco-m68k-toolchain:local"`.
 
 ## Commands
 
@@ -83,7 +104,7 @@ clean_args = ["clean"]
 - `rosco run [--clean]` — build, upload, and monitor through one open port.
 - `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
   `--all` also shows built-in and non-USB serial ports.
-- `rosco doctor` — check the builder, C cross-toolchain, and UART discovery.
+- `rosco doctor` — check Docker, local build tools, and UART discovery.
 
 See [Architecture](docs/architecture.md) for module boundaries and extension
 points.

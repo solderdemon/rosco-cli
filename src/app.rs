@@ -73,6 +73,18 @@ fn resolve_init_destination(path: &Path) -> Result<PathBuf> {
     }
 }
 
+fn absolute_project_root(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("could not determine current directory")?
+            .join(path)
+    }
+    .canonicalize()
+    .with_context(|| format!("could not resolve project directory {}", path.display()))
+}
+
 fn serial_settings(config: &Config, args: &SerialArgs) -> Result<(String, u32)> {
     let name = match args.port.clone().or_else(|| config.serial.port.clone()) {
         Some(name) => name,
@@ -187,11 +199,25 @@ fn print_ports(show_all: bool) -> Result<()> {
 }
 
 fn doctor(config: &Config) -> Result<()> {
-    let builder_ok = probe_command(&config.build.program);
-    print_check("build command", &config.build.program, builder_ok);
-
-    let compiler = "m68k-elf-rosco-gcc";
-    print_check("C toolchain", compiler, probe_command(compiler));
+    let docker_ok = probe_docker();
+    print_check("Docker", "docker", docker_ok);
+    if docker_ok {
+        let image_ok = docker_image_available(&config.build.docker.image);
+        print_check("toolchain image", &config.build.docker.image, image_ok);
+        if !image_ok {
+            println!("[WARN] toolchain image will be pulled on the first build");
+        }
+    }
+    print_check(
+        "local build command",
+        &config.build.program,
+        probe_command(&config.build.program),
+    );
+    print_check(
+        "local C toolchain",
+        "m68k-elf-rosco-gcc",
+        probe_command("m68k-elf-rosco-gcc"),
+    );
 
     match serial::list_ports() {
         Ok(ports) if ports.is_empty() => println!("[WARN] UART: no serial ports found"),
@@ -209,13 +235,27 @@ fn doctor(config: &Config) -> Result<()> {
         Err(error) => println!("[WARN] UART: {error:#}"),
     }
 
-    if !builder_ok {
-        bail!(
-            "configured build command `{}` is unavailable",
-            config.build.program
-        );
-    }
     Ok(())
+}
+
+fn docker_image_available(image: &str) -> bool {
+    Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn probe_docker() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn probe_command(program: &str) -> bool {
@@ -225,7 +265,7 @@ fn probe_command(program: &str) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok()
+        .is_ok_and(|status| status.success())
 }
 
 fn print_check(label: &str, program: &str, available: bool) {
