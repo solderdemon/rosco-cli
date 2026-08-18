@@ -32,6 +32,7 @@ pub struct BuildConfig {
     pub clean_args: Vec<String>,
     pub working_directory: PathBuf,
     pub environment: BTreeMap<String, String>,
+    pub docker: DockerConfig,
 }
 
 impl Default for BuildConfig {
@@ -42,6 +43,26 @@ impl Default for BuildConfig {
             clean_args: vec!["clean".into()],
             working_directory: PathBuf::from("."),
             environment: BTreeMap::new(),
+            docker: DockerConfig::default(),
+        }
+    }
+}
+
+/// Docker settings for the toolchain that builds the target application.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DockerConfig {
+    /// Docker image containing the rosco_m68k toolchain.
+    pub image: String,
+    /// Optional Docker platform, for example `linux/amd64` on ARM hosts.
+    pub platform: Option<String>,
+}
+
+impl Default for DockerConfig {
+    fn default() -> Self {
+        Self {
+            image: "solderdemon/rosco_m68k:latest".into(),
+            platform: None,
         }
     }
 }
@@ -124,12 +145,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_match_rosco_m68k_conventions() {
+    fn defaults_match_rosco_m68k_docker_conventions() {
         let config = Config::default();
         let root = Path::new("/work/hello");
         assert_eq!(config.artifact_path(root).unwrap(), root.join("hello.bin"));
         assert_eq!(config.serial.baud, 38_400);
         assert_eq!(config.build.program, "make");
+        assert_eq!(config.build.docker.image, "solderdemon/rosco_m68k:latest");
     }
 
     #[test]
@@ -144,6 +166,10 @@ mod tests {
                 args = ["release"]
                 working_directory = "firmware"
 
+                [build.docker]
+                image = "example/rosco-toolchain:v1"
+                platform = "linux/amd64"
+
                 [serial]
                 port = "COM4"
             "#,
@@ -152,6 +178,7 @@ mod tests {
 
         assert_eq!(config.build.program, "mingw32-make");
         assert_eq!(config.build.clean_args, ["clean"]);
+        assert_eq!(config.build.docker.platform.as_deref(), Some("linux/amd64"));
         assert_eq!(config.serial.port.as_deref(), Some("COM4"));
     }
 

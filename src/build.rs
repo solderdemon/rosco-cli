@@ -5,35 +5,37 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::Config;
 
+const LIBRARY_LINKER_SCRIPT: &str = "libs/build/lib/ld/serial/hugerom_rosco_m68k_program.ld";
+
 #[derive(Debug)]
 pub struct BuildOutput {
     pub artifact: PathBuf,
 }
 
 pub fn build(project_root: &Path, config: &Config, clean: bool) -> Result<BuildOutput> {
-    let working_directory = config.build_directory(project_root);
-    if !working_directory.is_dir() {
-        bail!(
-            "build directory does not exist: {}",
-            working_directory.display()
-        );
-    }
-
     if clean {
-        run_builder(
-            &config.build.program,
-            &config.build.clean_args,
-            &working_directory,
-            &config.build.environment,
-        )
-        .context("clean command failed")?;
+        run_docker_make(project_root, &config.build.docker.image, &["clean".into()])
+            .context("clean command failed")?;
     }
 
-    run_builder(
-        &config.build.program,
-        &config.build.args,
-        &working_directory,
-        &config.build.environment,
+    if !project_root.join(LIBRARY_LINKER_SCRIPT).is_file() {
+        run_docker_make(
+            project_root,
+            &config.build.docker.image,
+            &["-C".into(), "libs".into(), "install".into()],
+        )
+        .context("library installation failed")?;
+    }
+
+    let project_name = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .context("cannot determine project directory name")?;
+    run_docker_make(
+        project_root,
+        &config.build.docker.image,
+        &[format!("PROGRAM_BASENAME={project_name}")],
     )
     .context("build command failed")?;
 
@@ -44,25 +46,60 @@ pub fn build(project_root: &Path, config: &Config, clean: bool) -> Result<BuildO
             artifact.display()
         );
     }
-
     Ok(BuildOutput { artifact })
 }
 
-fn run_builder(
-    program: &str,
-    args: &[String],
-    working_directory: &Path,
-    environment: &std::collections::BTreeMap<String, String>,
-) -> Result<ExitStatus> {
-    eprintln!("$ {program} {}", args.join(" "));
-    let status = Command::new(program)
-        .args(args)
-        .current_dir(working_directory)
-        .envs(environment)
+fn run_docker_make(project_root: &Path, image: &str, make_args: &[String]) -> Result<ExitStatus> {
+    let user = host_user();
+    let mut command = Command::new("docker");
+    command
+        .args(["run", "--rm"])
+        .args(["--user", &user])
+        .args(["--env", "HOME=/tmp"])
+        .arg("--volume")
+        .arg(format!("{}:/workspace", project_root.display()))
+        .args(["--workdir", "/workspace"])
+        .arg(image)
+        .arg("make")
+        .args(make_args);
+
+    eprintln!(
+        "$ docker run --rm --user {} --env HOME=/tmp --volume {}:/workspace --workdir /workspace {} make {}",
+        user,
+        project_root.display(),
+        image,
+        make_args.join(" ")
+    );
+    let status = command
         .status()
-        .with_context(|| format!("could not start `{program}`"))?;
+        .context("could not start docker; install Docker Desktop or Docker Engine")?;
     if !status.success() {
-        bail!("`{program}` exited with {status}");
+        bail!("Docker make command exited with {status}");
     }
     Ok(status)
+}
+
+#[cfg(unix)]
+fn host_user() -> String {
+    format!("{}:{}", unsafe { libc::geteuid() }, unsafe {
+        libc::getegid()
+    })
+}
+
+#[cfg(not(unix))]
+fn host_user() -> String {
+    String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linker_script_path_matches_the_library_install_target() {
+        assert_eq!(
+            LIBRARY_LINKER_SCRIPT,
+            "libs/build/lib/ld/serial/hugerom_rosco_m68k_program.ld"
+        );
+    }
 }

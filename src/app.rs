@@ -13,6 +13,13 @@ use crate::kermit::{KermitOptions, TransferProgress};
 use crate::serial;
 
 pub fn run(cli: Cli) -> Result<()> {
+    if let RoscoCommand::Init(args) = &cli.command {
+        let destination = resolve_init_destination(&args.destination)?;
+        crate::init::create(args.language.clone(), &destination)?;
+        eprintln!("Created {}", destination.display());
+        return Ok(());
+    }
+
     let project_root = absolute_project_root(&cli.project)?;
     if !project_root.is_dir() {
         bail!(
@@ -23,6 +30,7 @@ pub fn run(cli: Cli) -> Result<()> {
     let config = Config::load(&project_root)?;
 
     match cli.command {
+        RoscoCommand::Init(_) => unreachable!("handled before resolving the project"),
         RoscoCommand::Build(args) => {
             let output = build::build(&project_root, &config, args.clean)?;
             eprintln!("Built {}", output.artifact.display());
@@ -55,7 +63,7 @@ pub fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn absolute_project_root(path: &Path) -> Result<PathBuf> {
+fn resolve_init_destination(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
     } else {

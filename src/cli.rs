@@ -16,6 +16,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum RoscoCommand {
+    /// Create a new C or assembly rosco_m68k project.
+    Init(InitArgs),
     /// Compile the current application.
     Build(BuildArgs),
     /// Upload a binary through UART using Kermit.
@@ -26,8 +28,23 @@ pub enum RoscoCommand {
     Run(RunArgs),
     /// List USB serial ports that may be connected to rosco_m68k.
     Ports(PortsArgs),
-    /// Check the local build toolchain and UART setup.
+    /// Check Docker, local build tools, and UART setup.
     Doctor,
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// Project language.
+    pub language: ProjectLanguage,
+
+    /// Directory to create. It must not already exist.
+    pub destination: PathBuf,
+}
+
+#[derive(Clone, Debug, clap::ValueEnum)]
+pub enum ProjectLanguage {
+    C,
+    Asm,
 }
 
 #[derive(Debug, Args)]
@@ -114,5 +131,15 @@ mod tests {
             panic!("expected ports command");
         };
         assert!(args.all);
+    }
+
+    #[test]
+    fn parses_init_language_and_destination() {
+        let cli = Cli::try_parse_from(["rosco", "init", "asm", "hello"]).unwrap();
+        let RoscoCommand::Init(args) = cli.command else {
+            panic!("expected init command");
+        };
+        assert!(matches!(args.language, ProjectLanguage::Asm));
+        assert_eq!(args.destination, PathBuf::from("hello"));
     }
 }
