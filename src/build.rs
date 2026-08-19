@@ -51,22 +51,29 @@ pub fn build(project_root: &Path, config: &Config, clean: bool) -> Result<BuildO
 
 fn run_docker_make(project_root: &Path, image: &str, make_args: &[String]) -> Result<ExitStatus> {
     let user = host_user();
+    let volume_source = docker_volume_source(project_root);
     let mut command = Command::new("docker");
+    command.args(["run", "--rm"]);
+    if let Some(user) = &user {
+        command.args(["--user", user]);
+    }
     command
-        .args(["run", "--rm"])
-        .args(["--user", &user])
         .args(["--env", "HOME=/tmp"])
         .arg("--volume")
-        .arg(format!("{}:/workspace", project_root.display()))
+        .arg(format!("{volume_source}:/workspace"))
         .args(["--workdir", "/workspace"])
         .arg(image)
         .arg("make")
         .args(make_args);
 
+    let user_args = user
+        .as_deref()
+        .map(|user| format!(" --user {user}"))
+        .unwrap_or_default();
     eprintln!(
-        "$ docker run --rm --user {} --env HOME=/tmp --volume {}:/workspace --workdir /workspace {} make {}",
-        user,
-        project_root.display(),
+        "$ docker run --rm{} --env HOME=/tmp --volume {}:/workspace --workdir /workspace {} make {}",
+        user_args,
+        volume_source,
         image,
         make_args.join(" ")
     );
@@ -80,20 +87,56 @@ fn run_docker_make(project_root: &Path, image: &str, make_args: &[String]) -> Re
 }
 
 #[cfg(unix)]
-fn host_user() -> String {
-    format!("{}:{}", unsafe { libc::geteuid() }, unsafe {
+fn host_user() -> Option<String> {
+    Some(format!("{}:{}", unsafe { libc::geteuid() }, unsafe {
         libc::getegid()
-    })
+    }))
 }
 
 #[cfg(not(unix))]
-fn host_user() -> String {
-    String::new()
+fn host_user() -> Option<String> {
+    None
+}
+
+fn docker_volume_source(path: &Path) -> String {
+    strip_windows_verbatim_prefix(&path.display().to_string())
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{stripped}");
+    }
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{LIBRARY_LINKER_SCRIPT, docker_volume_source, strip_windows_verbatim_prefix};
+    use std::path::Path;
+
+    #[test]
+    fn strips_windows_verbatim_drive_prefix() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\C:\Users\savcu\hello"),
+            r"C:\Users\savcu\hello"
+        );
+    }
+
+    #[test]
+    fn strips_windows_verbatim_unc_prefix() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\server\share\hello"),
+            r"\\server\share\hello"
+        );
+    }
+
+    #[test]
+    fn leaves_standard_path_unchanged() {
+        assert_eq!(
+            docker_volume_source(Path::new(r"C:\Users\savcu\hello")),
+            r"C:\Users\savcu\hello"
+        );
+    }
 
     #[test]
     fn linker_script_path_matches_the_library_install_target() {
