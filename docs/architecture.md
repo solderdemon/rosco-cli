@@ -49,7 +49,7 @@ rosco run
   -> verify the .bin artifact
   -> resolve/open UART
   -> Kermit S -> F -> D... -> Z -> B
-  -> stream UART bytes to stdout
+  -> interactive UART session (stdin/stdout with terminal raw mode)
 ```
 
 ## Portability model

@@ -1,4 +1,6 @@
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, IsTerminal, Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -50,20 +52,103 @@ pub fn open(name: &str, baud: u32, timeout: Duration) -> Result<Box<dyn SerialPo
         .with_context(|| format!("could not open serial port {name} at {baud} baud"))
 }
 
-pub fn monitor(mut port: Box<dyn SerialPort>) -> Result<()> {
-    eprintln!("Monitoring UART; press Ctrl-C to stop.");
-    let mut stdout = std::io::stdout().lock();
-    let mut buffer = [0_u8; 4096];
+struct RawModeGuard {
+    active: bool,
+}
 
-    loop {
-        match port.read(&mut buffer) {
-            Ok(0) => {}
-            Ok(count) => {
-                stdout.write_all(&buffer[..count])?;
-                stdout.flush()?;
-            }
-            Err(error) if error.kind() == ErrorKind::TimedOut => {}
-            Err(error) => return Err(error).context("UART read failed"),
+impl RawModeGuard {
+    fn enter() -> Result<Self> {
+        if std::io::stdin().is_terminal() {
+            crossterm::terminal::enable_raw_mode().context("could not enable terminal raw mode")?;
+            Ok(Self { active: true })
+        } else {
+            Ok(Self { active: false })
         }
     }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = crossterm::terminal::disable_raw_mode();
+        }
+    }
+}
+
+pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
+    eprintln!("Interactive UART session; press Ctrl-C to exit.");
+
+    let mut serial_writer = port
+        .try_clone()
+        .context("could not clone serial port for interactive input")?;
+    let mut serial_reader = port;
+
+    let raw_guard = RawModeGuard::enter()?;
+    let is_raw = raw_guard.active;
+
+    let running = Arc::new(AtomicBool::new(true));
+    let running_writer = running.clone();
+
+    let stdin_thread = std::thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buffer = [0_u8; 512];
+
+        while running_writer.load(Ordering::Relaxed) {
+            match stdin.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    for &byte in &buffer[..count] {
+                        if byte == 0x03 || byte == 0x1d {
+                            running_writer.store(false, Ordering::SeqCst);
+                            return;
+                        }
+                    }
+
+                    if serial_writer.write_all(&buffer[..count]).is_err() {
+                        break;
+                    }
+                    let _ = serial_writer.flush();
+                }
+                Err(_) => break,
+            }
+        }
+        running_writer.store(false, Ordering::SeqCst);
+    });
+
+    let mut stdout = std::io::stdout().lock();
+    let mut buffer = [0_u8; 4096];
+    let mut last_was_cr = false;
+
+    while running.load(Ordering::SeqCst) {
+        match serial_reader.read(&mut buffer) {
+            Ok(0) => {}
+            Ok(count) => {
+                if is_raw {
+                    for &byte in &buffer[..count] {
+                        if byte == b'\n' && !last_was_cr {
+                            let _ = stdout.write_all(b"\r\n");
+                        } else {
+                            let _ = stdout.write_all(&[byte]);
+                        }
+                        last_was_cr = byte == b'\r';
+                    }
+                } else {
+                    let _ = stdout.write_all(&buffer[..count]);
+                }
+                let _ = stdout.flush();
+            }
+            Err(error) if error.kind() == ErrorKind::TimedOut => {}
+            Err(error) => {
+                running.store(false, Ordering::SeqCst);
+                drop(raw_guard);
+                return Err(error).context("UART read failed");
+            }
+        }
+    }
+
+    drop(raw_guard);
+    eprintln!("\r\nUART session closed.");
+    let _ = stdin_thread;
+
+    Ok(())
 }

@@ -30,8 +30,20 @@ Linux and macOS.
 
 ## Typical workflow
 
-Run these commands from an application that includes rosco_m68k's
-`code/software/software.mk`:
+Create a project, then build and run it:
+
+```sh
+rosco init c hello
+cd hello
+rosco build
+```
+
+`init` creates the destination directory only when it does not already exist.
+It copies the shared build files and libraries plus the selected `c` or `asm`
+starter source. On the first build, `rosco` builds the bundled libraries; later
+builds reuse `libs/build`.
+
+For an existing project, use:
 
 ```sh
 rosco doctor
@@ -49,8 +61,8 @@ rosco run --port /dev/ttyUSB0
 ```
 
 On Windows, use a port such as `COM3`. UART defaults to 38400 baud, 8 data bits,
-no parity, one stop bit, and no flow control. `rosco monitor` is currently an
-output monitor; interactive terminal input is planned as a separate capability.
+no parity, one stop bit, and no flow control. `rosco monitor` opens a bidirectional
+interactive UART session with terminal raw mode (press `Ctrl-C` to exit).
 
 Use `-C` to work with another project directory:
 
@@ -98,10 +110,11 @@ its `make image` target and set `image = "rosco-m68k-toolchain:local"`.
 
 ## Commands
 
+- `rosco init <c|asm> <destination>` — create a new rosco_m68k starter project.
 - `rosco build [--clean]` — run the configured build and validate the artifact.
 - `rosco upload [FILE]` — transfer a binary using the built-in Kermit sender.
-- `rosco monitor` — stream raw UART output to stdout until Ctrl-C.
-- `rosco run [--clean]` — build, upload, and monitor through one open port.
+- `rosco monitor` — open an interactive UART session (press Ctrl-C to exit).
+- `rosco run [--clean]` — build, upload, and open an interactive UART session.
 - `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
   `--all` also shows built-in and non-USB serial ports.
 - `rosco doctor` — check Docker, local build tools, and UART discovery.

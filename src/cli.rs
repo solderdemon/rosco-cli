@@ -22,9 +22,9 @@ pub enum RoscoCommand {
     Build(BuildArgs),
     /// Upload a binary through UART using Kermit.
     Upload(UploadArgs),
-    /// Display UART output until interrupted.
+    /// Open an interactive UART session.
     Monitor(MonitorArgs),
-    /// Build, upload, and then display UART output.
+    /// Build, upload, and open an interactive UART session.
     Run(RunArgs),
     /// List USB serial ports that may be connected to rosco_m68k.
     Ports(PortsArgs),
