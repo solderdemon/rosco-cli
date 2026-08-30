@@ -70,6 +70,56 @@ Use `-C` to work with another project directory:
 rosco -C examples/hello run --port COM3
 ```
 
+## Settings
+
+Anything you would otherwise pass on every run can be saved once:
+
+```sh
+rosco config set serial.port /dev/ttyUSB0   # then just `rosco run`
+rosco config set serial.baud 115200
+rosco config set defaults.target emulator   # no more --emulator
+rosco config list                           # every setting and where it came from
+```
+
+There are two settings files:
+
+- the per-user one, which applies to every project on this machine. It lives in
+  `$XDG_CONFIG_HOME/rosco/config.toml` (`~/.config/rosco/config.toml` by
+  default) on Linux and macOS, and `%APPDATA%\rosco\config.toml` on Windows.
+  `ROSCO_CONFIG_HOME` overrides the directory. This is where the UART you have
+  plugged in and the path to your emulator build belong.
+- the project's `rosco.toml`, for what belongs to the application: its artifact,
+  its builder, its machine. Write to it with `--local`.
+
+The project file wins over the per-user one, key by key, and command-line
+options win over both:
+
+```sh
+rosco config set --local emulator.machine rosco_6502
+rosco config unset serial.baud
+rosco config get serial.port
+rosco config path --local     # print the file a scope writes to
+rosco config edit             # open it in $EDITOR
+```
+
+`rosco config list` is the full list of what can be saved:
+
+| Setting | Meaning |
+| --- | --- |
+| `project.artifact` | Binary the build produces, when it is not `<directory>.bin` |
+| `build.program`, `build.args`, `build.clean_args` | The build command and its arguments |
+| `build.working_directory` | Where to run it, relative to the project |
+| `build.environment.<NAME>` | A variable passed to the build process |
+| `build.docker.image`, `build.docker.platform` | Toolchain image, and platform on ARM hosts |
+| `serial.port`, `serial.baud`, `serial.read_timeout_ms` | UART device and line settings |
+| `upload.max_retries`, `upload.packet_timeout_ms` | Kermit transfer behaviour |
+| `emulator.program`, `emulator.machine`, `emulator.rom_path`, `emulator.sd_card`, `emulator.args` | Which emulator to run and how |
+| `defaults.target` | `hardware` or `emulator` |
+
+`config set` refuses a name that is not a real setting and a value of the wrong
+type, so a typo is caught at the point you make it rather than on the next
+build. Edits keep the rest of the file, comments included, as you wrote it.
+
 ## Configuration
 
 Configuration is optional. Without `rosco.toml`, the CLI runs `make all` and
@@ -118,6 +168,9 @@ its `make image` target and set `image = "rosco-m68k-toolchain:local"`.
 - `rosco run [--clean]` — build, upload, and open an interactive UART session.
 - `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
   `--all` also shows built-in and non-USB serial ports.
+- `rosco config <list|get|set|unset|path|edit>` — read and write saved
+  settings; `--local` targets the project's `rosco.toml` instead of the
+  per-user file.
 - `rosco doctor` — check Docker, local build tools, the emulator, and UART
   discovery.
 
@@ -132,6 +185,15 @@ rosco run --emulator                       # build, load, and attach the console
 rosco upload hello.bin --emulator          # run a binary that is already built
 rosco monitor --emulator                   # just boot the firmware
 rosco run --emulator --machine rosco_6502  # the 6502 board instead
+```
+
+With no board on the desk at all, save the choice instead of repeating the
+flag; `--hardware` then overrides it for a single run:
+
+```sh
+rosco config set defaults.target emulator
+rosco run
+rosco run --hardware --port /dev/ttyUSB0
 ```
 
 There is no Kermit transfer involved. The emulator loads the binary straight
@@ -178,8 +240,10 @@ it, so it runs whatever you point it at.
 ### Finding the emulator
 
 The CLI looks for the emulator in this order: `--emulator-path`, then
-`emulator.program` in `rosco.toml`, then the `ROSCO_EMULATOR` environment
-variable, and finally `rosco-emulator` on `PATH`.
+`emulator.program` from the settings files, then the `ROSCO_EMULATOR`
+environment variable, and finally `rosco-emulator` on `PATH`. Since a build of
+the emulator belongs to the machine rather than to one project, save it once
+with `rosco config set emulator.program /path/to/rosco-emulator`.
 
 Note that the emulator's own binary is called `rosco` when built in its source
 tree, which is this CLI's name too. Either point at it explicitly or install it
@@ -195,7 +259,7 @@ points.
 When `--port` is omitted, `upload`, `monitor`, and `run` automatically select a
 single USB-UART device even if Linux reports many built-in `/dev/ttyS*` ports.
 USB identifiers describe the adapter rather than the computer connected to its
-UART pins, so multiple USB-UART devices still require `--port` or a configured
+UART pins, so multiple USB-UART devices still require `--port` or a saved
 `serial.port`.
 
 ## Development

@@ -1,4 +1,9 @@
 # Copy this file to rosco.toml in a rosco_m68k application directory.
+#
+# Settings that belong to your machine rather than to this project - the serial
+# port, the emulator binary - are better saved once with `rosco config set`,
+# which keeps them in a per-user file that applies to every project. Anything
+# here overrides that file.
 
 [project]
 # software.mk normally produces <directory-name>.bin. Set this when your
@@ -20,6 +25,10 @@ image = "roscopeco/rosco_m68k:latest"
 # Values are passed only to the build process.
 # [build.environment]
 # ROSCO_M68K_DIR = "../rosco_m68k"
+
+[defaults]
+# Where upload, monitor, and run send the program without --emulator.
+# target = "emulator"
 
 [serial]
 # Leave port unset to auto-select when exactly one USB UART is present.

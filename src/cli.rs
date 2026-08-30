@@ -28,6 +28,8 @@ pub enum RoscoCommand {
     Run(RunArgs),
     /// List USB serial ports that may be connected to rosco_m68k.
     Ports(PortsArgs),
+    /// Read and write saved settings.
+    Config(ConfigArgs),
     /// Check Docker, local build tools, and UART setup.
     Doctor,
 }
@@ -89,6 +91,63 @@ pub struct RunArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: ConfigCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Show every setting in force and which file supplies it.
+    #[command(alias = "show")]
+    List,
+    /// Print one setting's value.
+    Get {
+        /// Setting name, for example serial.port.
+        key: String,
+    },
+    /// Save a setting so it no longer has to be passed as an option.
+    Set {
+        /// Setting name, for example serial.port.
+        key: String,
+        /// Value to store.
+        value: String,
+
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Remove a saved setting.
+    Unset {
+        /// Setting name, for example serial.port.
+        key: String,
+
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Print the path of a settings file.
+    Path {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Open a settings file in $EDITOR.
+    Edit {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Args)]
+pub struct ScopeArgs {
+    /// Use the per-user settings file shared by every project (the default).
+    #[arg(long, group = "settings-scope")]
+    pub global: bool,
+
+    /// Use rosco.toml in the project directory.
+    #[arg(long, group = "settings-scope")]
+    pub local: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct PortsArgs {
     /// Include built-in and non-USB serial ports such as /dev/ttyS*.
     #[arg(long)]
@@ -98,11 +157,15 @@ pub struct PortsArgs {
 #[derive(Clone, Debug, Default, Args)]
 pub struct EmulatorArgs {
     /// Use the rosco emulator instead of a board attached over UART.
-    #[arg(short = 'E', long)]
+    #[arg(short = 'E', long, overrides_with = "hardware")]
     pub emulator: bool,
 
+    /// Use a board attached over UART, overriding defaults.target.
+    #[arg(long, overrides_with = "emulator")]
+    pub hardware: bool,
+
     /// Machine to emulate, for example rosco_m68k_010 or rosco_6502.
-    #[arg(long, requires = "emulator")]
+    #[arg(long)]
     pub machine: Option<String>,
 
     /// Emulator executable, when it is not on PATH as rosco-emulator.
@@ -110,11 +173,11 @@ pub struct EmulatorArgs {
     pub emulator_path: Option<PathBuf>,
 
     /// Directory holding the firmware ROM sets.
-    #[arg(long, value_name = "DIR", requires = "emulator")]
+    #[arg(long, value_name = "DIR")]
     pub rom_path: Option<PathBuf>,
 
     /// Image to attach as the emulated SPI SD card.
-    #[arg(long, value_name = "IMAGE", requires = "emulator")]
+    #[arg(long, value_name = "IMAGE")]
     pub sd_card: Option<PathBuf>,
 }
 
@@ -178,8 +241,43 @@ mod tests {
     }
 
     #[test]
-    fn machine_only_makes_sense_with_the_emulator() {
-        assert!(Cli::try_parse_from(["rosco", "run", "--machine", "rosco_6502"]).is_err());
+    fn hardware_overrides_a_saved_emulator_default() {
+        let cli = Cli::try_parse_from(["rosco", "run", "--hardware"]).unwrap();
+        let RoscoCommand::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.emulator.hardware);
+        assert!(!args.emulator.emulator);
+    }
+
+    #[test]
+    fn parses_config_set_and_defaults_to_the_user_settings_file() {
+        let cli = Cli::try_parse_from(["rosco", "config", "set", "serial.port", "COM3"]).unwrap();
+        let RoscoCommand::Config(args) = cli.command else {
+            panic!("expected config command");
+        };
+        let ConfigCommand::Set { key, value, scope } = args.command else {
+            panic!("expected config set");
+        };
+        assert_eq!(key, "serial.port");
+        assert_eq!(value, "COM3");
+        assert!(!scope.local);
+    }
+
+    #[test]
+    fn config_writes_to_one_file_at_a_time() {
+        assert!(
+            Cli::try_parse_from([
+                "rosco",
+                "config",
+                "set",
+                "serial.port",
+                "COM3",
+                "--global",
+                "--local",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

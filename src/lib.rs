@@ -6,5 +6,6 @@ pub mod emulator;
 pub mod init;
 pub mod kermit;
 pub mod serial;
+pub mod settings;
 
 pub use app::run;

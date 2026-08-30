@@ -8,10 +8,11 @@ use serialport::SerialPort;
 
 use crate::build;
 use crate::cli::{Cli, EmulatorArgs, RoscoCommand, SerialArgs};
-use crate::config::{Config, resolve_from};
+use crate::config::{self, Config, Target, resolve_from};
 use crate::emulator::{self, EmulatorOptions};
 use crate::kermit::{KermitOptions, TransferProgress};
 use crate::serial::{self, ConsoleKind};
+use crate::settings;
 
 pub fn run(cli: Cli) -> Result<()> {
     if let RoscoCommand::Init(args) = &cli.command {
@@ -19,6 +20,12 @@ pub fn run(cli: Cli) -> Result<()> {
         crate::init::create(args.language.clone(), &destination)?;
         eprintln!("Created {}", destination.display());
         return Ok(());
+    }
+
+    if let RoscoCommand::Config(args) = cli.command {
+        // Saving a user setting must work anywhere, project or not.
+        let project_root = absolute_project_root(&cli.project).ok();
+        return settings::run(project_root.as_deref(), args.command);
     }
 
     let project_root = absolute_project_root(&cli.project)?;
@@ -31,7 +38,9 @@ pub fn run(cli: Cli) -> Result<()> {
     let config = Config::load(&project_root)?;
 
     match cli.command {
-        RoscoCommand::Init(_) => unreachable!("handled before resolving the project"),
+        RoscoCommand::Init(_) | RoscoCommand::Config(_) => {
+            unreachable!("handled before resolving the project")
+        }
         RoscoCommand::Build(args) => {
             let output = build::build(&project_root, &config, args.clean)?;
             eprintln!("Built {}", output.artifact.display());
@@ -46,7 +55,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 bail!("binary does not exist: {}", file.display());
             }
 
-            if args.emulator.emulator {
+            if use_emulator(&config, &args.emulator)? {
                 // Nothing persists between emulator runs, so loading a
                 // binary and running it are the same thing.
                 let options = emulator_options(&config, &args.emulator, Some(&file))?;
@@ -58,7 +67,7 @@ pub fn run(cli: Cli) -> Result<()> {
             }
         }
         RoscoCommand::Monitor(args) => {
-            if args.emulator.emulator {
+            if use_emulator(&config, &args.emulator)? {
                 let options = emulator_options(&config, &args.emulator, None)?;
                 attach_emulator(&options)?;
             } else {
@@ -68,9 +77,12 @@ pub fn run(cli: Cli) -> Result<()> {
             }
         }
         RoscoCommand::Run(args) => {
+            // Resolved before the build so a bad flag fails in a second
+            // rather than after a toolchain run.
+            let emulator = use_emulator(&config, &args.emulator)?;
             let output = build::build(&project_root, &config, args.clean)?;
 
-            if args.emulator.emulator {
+            if emulator {
                 let options = emulator_options(&config, &args.emulator, Some(&output.artifact))?;
                 // We built this with the 68k toolchain, so we know what it
                 // can and cannot run on.
@@ -87,6 +99,34 @@ pub fn run(cli: Cli) -> Result<()> {
         RoscoCommand::Doctor => doctor(&config)?,
     }
     Ok(())
+}
+
+/// Whether this run targets the emulator: the flags decide, and failing that
+/// the saved `defaults.target`.
+fn use_emulator(config: &Config, args: &EmulatorArgs) -> Result<bool> {
+    let emulator = if args.hardware {
+        false
+    } else if args.emulator {
+        true
+    } else {
+        config.defaults.target == Target::Emulator
+    };
+
+    if !emulator {
+        for (flag, given) in [
+            ("--machine", args.machine.is_some()),
+            ("--rom-path", args.rom_path.is_some()),
+            ("--sd-card", args.sd_card.is_some()),
+        ] {
+            if given {
+                bail!(
+                    "{flag} only applies to the emulator; pass --emulator or run \
+                     `rosco config set defaults.target emulator`"
+                );
+            }
+        }
+    }
+    Ok(emulator)
 }
 
 fn emulator_options(
@@ -311,6 +351,14 @@ fn doctor(config: &Config) -> Result<()> {
         Err(error) => println!("[WARN] emulator: {error:#}"),
     }
 
+    match config::global_config_path() {
+        Ok(path) if path.is_file() => {
+            print_check("user settings", &path.display().to_string(), true)
+        }
+        Ok(path) => println!("[ -- ] user settings: {} (not created yet)", path.display()),
+        Err(error) => println!("[WARN] user settings: {error:#}"),
+    }
+
     match serial::list_ports() {
         Ok(ports) if ports.is_empty() => println!("[WARN] UART: no serial ports found"),
         Ok(ports) => {
@@ -414,6 +462,41 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown machine"), "{error}");
+    }
+
+    #[test]
+    fn the_saved_target_decides_when_no_flag_is_passed() {
+        let mut config = Config::default();
+        let args = EmulatorArgs::default();
+        assert!(!use_emulator(&config, &args).unwrap());
+
+        config.defaults.target = Target::Emulator;
+        assert!(use_emulator(&config, &args).unwrap());
+    }
+
+    #[test]
+    fn hardware_beats_a_saved_emulator_default() {
+        let mut config = Config::default();
+        config.defaults.target = Target::Emulator;
+        let args = EmulatorArgs {
+            hardware: true,
+            ..EmulatorArgs::default()
+        };
+
+        assert!(!use_emulator(&config, &args).unwrap());
+    }
+
+    #[test]
+    fn emulator_only_flags_are_refused_when_targeting_hardware() {
+        let args = EmulatorArgs {
+            machine: Some("rosco_6502".into()),
+            ..EmulatorArgs::default()
+        };
+
+        let error = use_emulator(&Config::default(), &args)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--machine"), "{error}");
     }
 
     #[test]
