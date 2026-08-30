@@ -1,4 +1,5 @@
-# Copy this file to rosco.toml in a rosco_m68k application directory.
+# Copy this file to rosco.toml in a rosco_m68k or rosco_6502 application
+# directory.
 #
 # Every setting is commented out and shown with the value it already has, so a
 # copy of this file changes nothing until you uncomment a line. That matters:
@@ -11,19 +12,39 @@
 # `rosco config list` shows every setting, its value, and where it came from.
 
 [project]
-# software.mk normally produces <directory-name>.bin. Set this when your
-# Makefile uses a different output path.
+# The board this application is written for: rosco_m68k or rosco_6502. It
+# decides the toolchain image, the machine the emulator runs, and how a binary
+# reaches a board over the UART, so it is worth writing down even when it is
+# the default.
+# board = "rosco_m68k"
+
+# What this project builds: "program", which the board's firmware loads into
+# RAM and runs, or "firmware", which is what the machine starts in. A firmware
+# is a ROM image, so it is burned into a chip rather than sent over the UART,
+# and only the emulator can run it from here.
+# type = "firmware"
+
+# software.mk normally produces <directory-name>.bin, and the 6502 templates
+# follow the same convention; a firmware project produces <directory-name>.rom.
+# Set this when your Makefile uses a different output path.
 # artifact = "build/hello.bin"
 
 [build]
-# `make` runs inside Docker; no m68k compiler is needed on the host.
+# Where the compilers come from: "docker" needs nothing installed here, "host"
+# uses the ones on PATH. `rosco build --docker` and `--host` override it for a
+# single run, and `rosco doctor` says what a host build is missing.
+# toolchain = "docker"
+
 # program = "make"
 # args = ["all"]
 # clean_args = ["clean"]
 # working_directory = "."
 
 [build.docker]
-# image = "roscopeco/rosco_m68k:latest"
+# Defaults to the image for this project's board:
+#   rosco_m68k   solderdemon/rosco_m68k:latest
+#   rosco_6502   solderdemon/rosco_6502:latest
+# image = "solderdemon/rosco_m68k:latest"
 # On ARM hosts, uncomment this to run the published amd64 image through emulation.
 # platform = "linux/amd64"
 
@@ -45,16 +66,31 @@
 [upload]
 # max_retries = 6
 # packet_timeout_ms = 5000
+# Where a rosco_6502 program is loaded and started; the bottom of user low RAM,
+# and what the linker configuration in the template links for. The m68k
+# firmware takes the address from the binary itself and ignores this.
+# load_address = 0x0800
 
 [emulator]
 # Used by `rosco run --emulator` and `rosco monitor --emulator`.
+# Where the emulator comes from: "host", a build of it on this computer, or
+# "docker", its image, which carries the firmware with it and needs nothing
+# installed. `--emulator-path` still means a build on this computer.
+# source = "docker"
 # Leave program unset to take ROSCO_EMULATOR from the environment, or to look
 # up `rosco-emulator` on PATH. Built from its own source tree the emulator is
 # called `rosco`, which collides with this CLI, so point at it explicitly:
 # program = "/home/you/rosco-emulator/rosco"
-# The machine is a property of the project, so it does belong here.
-# machine = "rosco_m68k_010"
+# Defaults to the machine for this project's board: rosco_m68k_010 or
+# rosco_6502. Set it for one of the other m68k machines.
+# machine = "rosco_m68k_030"
 # Firmware ROM sets. Defaults to roms/ next to the emulator binary.
 # rom_path = "/home/you/rosco-emulator/roms"
 # sd_card = "sdcard.img"
 # args = ["-nothrottle"]
+
+# [emulator.docker]
+# The image `source = "docker"` runs, and the platform to ask Docker for on an
+# ARM host.
+# image = "solderdemon/rosco-emulator:latest"
+# platform = "linux/amd64"
