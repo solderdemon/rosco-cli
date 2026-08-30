@@ -322,8 +322,16 @@ fn print_ports(show_all: bool) -> Result<()> {
 }
 
 fn doctor(config: &Config) -> Result<()> {
-    let docker_ok = probe_docker();
-    print_check("Docker", "docker", docker_ok);
+    let docker_ok = match build::ensure_docker_available() {
+        Ok(()) => {
+            print_check("Docker", "docker", true);
+            true
+        }
+        Err(error) => {
+            println!("[WARN] Docker: {error:#}");
+            false
+        }
+    };
     if docker_ok {
         let image_ok = docker_image_available(&config.build.docker.image);
         print_check("toolchain image", &config.build.docker.image, image_ok);
@@ -391,16 +399,6 @@ fn probe_emulator(program: &Path) -> bool {
 fn docker_image_available(image: &str) -> bool {
     Command::new("docker")
         .args(["image", "inspect", image])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn probe_docker() -> bool {
-    Command::new("docker")
-        .arg("info")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
