@@ -481,7 +481,7 @@ mod tests {
         let global = home.path().join(GLOBAL_CONFIG_FILE);
         write(
             &global,
-            "[serial]\nport = \"/dev/ttyUSB0\"\nbaud = 115200\n\n[defaults]\ntarget = \"emulator\"\n",
+            "[serial]\nport = \"/dev/ttyUSB0\"\nbaud = 9600\n\n[defaults]\ntarget = \"emulator\"\n",
         );
         write(
             &project.path().join(CONFIG_FILE),
@@ -493,7 +493,7 @@ mod tests {
 
         assert_eq!(config.serial.port.as_deref(), Some("COM3"));
         // Untouched by the project file, so the user's value survives.
-        assert_eq!(config.serial.baud, 115_200);
+        assert_eq!(config.serial.baud, 9_600);
         assert_eq!(config.defaults.target, Target::Emulator);
         assert_eq!(config.serial.read_timeout_ms, 50);
 

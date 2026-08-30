@@ -1,9 +1,14 @@
 # Copy this file to rosco.toml in a rosco_m68k application directory.
 #
+# Every setting is commented out and shown with the value it already has, so a
+# copy of this file changes nothing until you uncomment a line. That matters:
+# what is written here overrides `rosco config set`, so a value repeated from
+# the defaults would quietly pin it for this project and undo your own.
+#
 # Settings that belong to your machine rather than to this project - the serial
 # port, the emulator binary - are better saved once with `rosco config set`,
-# which keeps them in a per-user file that applies to every project. Anything
-# here overrides that file.
+# which keeps them in a per-user file that applies to every project.
+# `rosco config list` shows every setting, its value, and where it came from.
 
 [project]
 # software.mk normally produces <directory-name>.bin. Set this when your
@@ -12,13 +17,13 @@
 
 [build]
 # `make` runs inside Docker; no m68k compiler is needed on the host.
-program = "make"
-args = ["all"]
-clean_args = ["clean"]
-working_directory = "."
+# program = "make"
+# args = ["all"]
+# clean_args = ["clean"]
+# working_directory = "."
 
 [build.docker]
-image = "roscopeco/rosco_m68k:latest"
+# image = "roscopeco/rosco_m68k:latest"
 # On ARM hosts, uncomment this to run the published amd64 image through emulation.
 # platform = "linux/amd64"
 
@@ -34,12 +39,12 @@ image = "roscopeco/rosco_m68k:latest"
 # Leave port unset to auto-select when exactly one USB UART is present.
 # Linux example: port = "/dev/ttyUSB0"
 # Windows example: port = "COM3"
-baud = 38400
-read_timeout_ms = 50
+# baud = 38400
+# read_timeout_ms = 50
 
 [upload]
-max_retries = 6
-packet_timeout_ms = 5000
+# max_retries = 6
+# packet_timeout_ms = 5000
 
 [emulator]
 # Used by `rosco run --emulator` and `rosco monitor --emulator`.
@@ -47,7 +52,8 @@ packet_timeout_ms = 5000
 # up `rosco-emulator` on PATH. Built from its own source tree the emulator is
 # called `rosco`, which collides with this CLI, so point at it explicitly:
 # program = "/home/you/rosco-emulator/rosco"
-machine = "rosco_m68k_010"
+# The machine is a property of the project, so it does belong here.
+# machine = "rosco_m68k_010"
 # Firmware ROM sets. Defaults to roms/ next to the emulator binary.
 # rom_path = "/home/you/rosco-emulator/roms"
 # sd_card = "sdcard.img"

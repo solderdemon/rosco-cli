@@ -76,7 +76,7 @@ Anything you would otherwise pass on every run can be saved once:
 
 ```sh
 rosco config set serial.port /dev/ttyUSB0   # then just `rosco run`
-rosco config set serial.baud 115200
+rosco config set serial.baud 9600
 rosco config set defaults.target emulator   # no more --emulator
 rosco config list                           # every setting and where it came from
 ```
@@ -92,7 +92,14 @@ There are two settings files:
   its builder, its machine. Write to it with `--local`.
 
 The project file wins over the per-user one, key by key, and command-line
-options win over both:
+options win over both. Only write a setting into `rosco.toml` when the project
+really does need its own value: one repeated from the defaults pins it there
+and quietly overrides what you saved for yourself.
+
+```sh
+rosco config list           # the origin column says which file decided each value
+```
+
 
 ```sh
 rosco config set --local emulator.machine rosco_6502

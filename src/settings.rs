@@ -363,12 +363,12 @@ mod tests {
     #[test]
     fn values_take_the_type_the_setting_expects() {
         let (_dir, path) = file("");
-        set(&path, "serial.baud", "115200").unwrap();
+        set(&path, "serial.baud", "9600").unwrap();
         set(&path, "defaults.target", "emulator").unwrap();
         set(&path, "build.args", r#"["all", "-j4"]"#).unwrap();
 
         let config: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(config.serial.baud, 115_200);
+        assert_eq!(config.serial.baud, 9_600);
         assert_eq!(config.defaults.target, config::Target::Emulator);
         assert_eq!(config.build.args, ["all", "-j4"]);
     }
@@ -388,11 +388,11 @@ mod tests {
             "# hand written\n[serial]\n# the adapter on my desk\nport = \"/dev/ttyUSB0\"\nbaud = 38400\n",
         );
 
-        set(&path, "serial.baud", "115200").unwrap();
+        set(&path, "serial.baud", "9600").unwrap();
 
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "# hand written\n[serial]\n# the adapter on my desk\nport = \"/dev/ttyUSB0\"\nbaud = 115200\n"
+            "# hand written\n[serial]\n# the adapter on my desk\nport = \"/dev/ttyUSB0\"\nbaud = 9600\n"
         );
     }
 
