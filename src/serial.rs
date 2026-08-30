@@ -75,13 +75,46 @@ impl Drop for RawModeGuard {
     }
 }
 
-pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
-    eprintln!("Interactive UART session; press Ctrl-C to exit.");
+/// What a console session is talking to, which decides how a quiet read and a
+/// closed stream should be treated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsoleKind {
+    /// A serial port: reads time out constantly and that is normal.
+    Uart,
+    /// The emulator over a socket: a closed stream means it exited.
+    Emulator,
+}
 
-    let mut serial_writer = port
+impl ConsoleKind {
+    fn banner(self) -> &'static str {
+        match self {
+            Self::Uart => "Interactive UART session; press Ctrl-C to exit.",
+            Self::Emulator => "Emulator console; press Ctrl-C to exit.",
+        }
+    }
+
+    fn closing(self) -> &'static str {
+        match self {
+            Self::Uart => "\r\nUART session closed.",
+            Self::Emulator => "\r\nEmulator stopped.",
+        }
+    }
+}
+
+pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
+    let writer = port
         .try_clone()
         .context("could not clone serial port for interactive input")?;
-    let mut serial_reader = port;
+    console(port, Box::new(writer), ConsoleKind::Uart)
+}
+
+/// Drives an interactive session over anything that reads and writes bytes.
+pub fn console(
+    mut reader: Box<dyn Read + Send>,
+    mut writer: Box<dyn Write + Send>,
+    kind: ConsoleKind,
+) -> Result<()> {
+    eprintln!("{}", kind.banner());
 
     let raw_guard = RawModeGuard::enter()?;
     let is_raw = raw_guard.active;
@@ -95,7 +128,9 @@ pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
 
         while running_writer.load(Ordering::Relaxed) {
             match stdin.read(&mut buffer) {
-                Ok(0) => break,
+                // Stdin being closed or redirected is a fine way to watch a
+                // machine boot, so its end only stops forwarding input.
+                Ok(0) => return,
                 Ok(count) => {
                     for &byte in &buffer[..count] {
                         if byte == 0x03 || byte == 0x1d {
@@ -104,15 +139,14 @@ pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
                         }
                     }
 
-                    if serial_writer.write_all(&buffer[..count]).is_err() {
-                        break;
+                    if writer.write_all(&buffer[..count]).is_err() {
+                        return;
                     }
-                    let _ = serial_writer.flush();
+                    let _ = writer.flush();
                 }
-                Err(_) => break,
+                Err(_) => return,
             }
         }
-        running_writer.store(false, Ordering::SeqCst);
     });
 
     let mut stdout = std::io::stdout().lock();
@@ -120,8 +154,13 @@ pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
     let mut last_was_cr = false;
 
     while running.load(Ordering::SeqCst) {
-        match serial_reader.read(&mut buffer) {
-            Ok(0) => {}
+        match reader.read(&mut buffer) {
+            Ok(0) => {
+                // A serial port simply had nothing to say; a socket is closed.
+                if kind == ConsoleKind::Emulator {
+                    break;
+                }
+            }
             Ok(count) => {
                 if is_raw {
                     for &byte in &buffer[..count] {
@@ -137,17 +176,21 @@ pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
                 }
                 let _ = stdout.flush();
             }
-            Err(error) if error.kind() == ErrorKind::TimedOut => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                ) => {}
             Err(error) => {
                 running.store(false, Ordering::SeqCst);
                 drop(raw_guard);
-                return Err(error).context("UART read failed");
+                return Err(error).context("console read failed");
             }
         }
     }
 
     drop(raw_guard);
-    eprintln!("\r\nUART session closed.");
+    eprintln!("{}", kind.closing());
     let _ = stdin_thread;
 
     Ok(())

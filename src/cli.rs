@@ -61,12 +61,18 @@ pub struct UploadArgs {
 
     #[command(flatten)]
     pub serial: SerialArgs,
+
+    #[command(flatten)]
+    pub emulator: EmulatorArgs,
 }
 
 #[derive(Debug, Args)]
 pub struct MonitorArgs {
     #[command(flatten)]
     pub serial: SerialArgs,
+
+    #[command(flatten)]
+    pub emulator: EmulatorArgs,
 }
 
 #[derive(Debug, Args)]
@@ -77,6 +83,9 @@ pub struct RunArgs {
 
     #[command(flatten)]
     pub serial: SerialArgs,
+
+    #[command(flatten)]
+    pub emulator: EmulatorArgs,
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +93,29 @@ pub struct PortsArgs {
     /// Include built-in and non-USB serial ports such as /dev/ttyS*.
     #[arg(long)]
     pub all: bool,
+}
+
+#[derive(Clone, Debug, Default, Args)]
+pub struct EmulatorArgs {
+    /// Use the rosco emulator instead of a board attached over UART.
+    #[arg(short = 'E', long)]
+    pub emulator: bool,
+
+    /// Machine to emulate, for example rosco_m68k_010 or rosco_6502.
+    #[arg(long, requires = "emulator")]
+    pub machine: Option<String>,
+
+    /// Emulator executable, when it is not on PATH as rosco-emulator.
+    #[arg(long, value_name = "PATH")]
+    pub emulator_path: Option<PathBuf>,
+
+    /// Directory holding the firmware ROM sets.
+    #[arg(long, value_name = "DIR", requires = "emulator")]
+    pub rom_path: Option<PathBuf>,
+
+    /// Image to attach as the emulated SPI SD card.
+    #[arg(long, value_name = "IMAGE", requires = "emulator")]
+    pub sd_card: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Args)]
@@ -131,6 +163,33 @@ mod tests {
             panic!("expected ports command");
         };
         assert!(args.all);
+    }
+
+    #[test]
+    fn run_can_target_the_emulator() {
+        let cli =
+            Cli::try_parse_from(["rosco", "run", "--emulator", "--machine", "rosco_6502"]).unwrap();
+
+        let RoscoCommand::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.emulator.emulator);
+        assert_eq!(args.emulator.machine.as_deref(), Some("rosco_6502"));
+    }
+
+    #[test]
+    fn machine_only_makes_sense_with_the_emulator() {
+        assert!(Cli::try_parse_from(["rosco", "run", "--machine", "rosco_6502"]).is_err());
+    }
+
+    #[test]
+    fn upload_can_target_the_emulator() {
+        let cli = Cli::try_parse_from(["rosco", "upload", "hello.bin", "--emulator"]).unwrap();
+        let RoscoCommand::Upload(args) = cli.command else {
+            panic!("expected upload command");
+        };
+        assert!(args.emulator.emulator);
+        assert_eq!(args.file, Some(PathBuf::from("hello.bin")));
     }
 
     #[test]

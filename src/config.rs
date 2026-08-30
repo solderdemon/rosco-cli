@@ -14,6 +14,7 @@ pub struct Config {
     pub build: BuildConfig,
     pub serial: SerialConfig,
     pub upload: UploadConfig,
+    pub emulator: EmulatorConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -85,6 +86,35 @@ impl Default for SerialConfig {
     }
 }
 
+/// Settings for running under the rosco emulator instead of real hardware.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EmulatorConfig {
+    /// Emulator executable. Left unset, `ROSCO_EMULATOR` is consulted and then
+    /// `rosco-emulator` is looked up on `PATH`.
+    pub program: Option<PathBuf>,
+    /// Machine to run.
+    pub machine: String,
+    /// Directory holding the firmware ROM sets, when not the emulator default.
+    pub rom_path: Option<PathBuf>,
+    /// Image to attach as the SPI SD card.
+    pub sd_card: Option<PathBuf>,
+    /// Extra arguments passed straight to the emulator.
+    pub args: Vec<String>,
+}
+
+impl Default for EmulatorConfig {
+    fn default() -> Self {
+        Self {
+            program: None,
+            machine: "rosco_m68k_010".into(),
+            rom_path: None,
+            sd_card: None,
+            args: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UploadConfig {
@@ -152,6 +182,28 @@ mod tests {
         assert_eq!(config.serial.baud, 38_400);
         assert_eq!(config.build.program, "make");
         assert_eq!(config.build.docker.image, "solderdemon/rosco_m68k:latest");
+        assert_eq!(config.emulator.machine, "rosco_m68k_010");
+        assert!(config.emulator.program.is_none());
+    }
+
+    #[test]
+    fn parses_emulator_settings() {
+        let config: Config = toml::from_str(
+            r#"
+                [emulator]
+                program = "/opt/rosco/rosco"
+                machine = "rosco_6502"
+                args = ["-nothrottle"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.emulator.program.as_deref(),
+            Some(Path::new("/opt/rosco/rosco"))
+        );
+        assert_eq!(config.emulator.machine, "rosco_6502");
+        assert_eq!(config.emulator.args, ["-nothrottle"]);
     }
 
     #[test]

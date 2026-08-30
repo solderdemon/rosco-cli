@@ -31,3 +31,15 @@ read_timeout_ms = 50
 [upload]
 max_retries = 6
 packet_timeout_ms = 5000
+
+[emulator]
+# Used by `rosco run --emulator` and `rosco monitor --emulator`.
+# Leave program unset to take ROSCO_EMULATOR from the environment, or to look
+# up `rosco-emulator` on PATH. Built from its own source tree the emulator is
+# called `rosco`, which collides with this CLI, so point at it explicitly:
+# program = "/home/you/rosco-emulator/rosco"
+machine = "rosco_m68k_010"
+# Firmware ROM sets. Defaults to roms/ next to the emulator binary.
+# rom_path = "/home/you/rosco-emulator/roms"
+# sd_card = "sdcard.img"
+# args = ["-nothrottle"]

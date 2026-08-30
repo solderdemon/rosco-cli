@@ -7,10 +7,11 @@ use anyhow::{Context, Result, bail};
 use serialport::SerialPort;
 
 use crate::build;
-use crate::cli::{Cli, RoscoCommand, SerialArgs};
+use crate::cli::{Cli, EmulatorArgs, RoscoCommand, SerialArgs};
 use crate::config::{Config, resolve_from};
+use crate::emulator::{self, EmulatorOptions};
 use crate::kermit::{KermitOptions, TransferProgress};
-use crate::serial;
+use crate::serial::{self, ConsoleKind};
 
 pub fn run(cli: Cli) -> Result<()> {
     if let RoscoCommand::Init(args) = &cli.command {
@@ -41,26 +42,108 @@ pub fn run(cli: Cli) -> Result<()> {
                 .map(|path| resolve_from(&project_root, &path))
                 .map(Ok)
                 .unwrap_or_else(|| config.artifact_path(&project_root))?;
-            let (port_name, baud) = serial_settings(&config, &args.serial)?;
-            let mut port = open_configured_port(&config, &port_name, baud)?;
-            upload(&mut *port, &file, &config)?;
+            if !file.is_file() {
+                bail!("binary does not exist: {}", file.display());
+            }
+
+            if args.emulator.emulator {
+                // Nothing persists between emulator runs, so loading a
+                // binary and running it are the same thing.
+                let options = emulator_options(&config, &args.emulator, Some(&file))?;
+                attach_emulator(&options)?;
+            } else {
+                let (port_name, baud) = serial_settings(&config, &args.serial)?;
+                let mut port = open_configured_port(&config, &port_name, baud)?;
+                upload(&mut *port, &file, &config)?;
+            }
         }
         RoscoCommand::Monitor(args) => {
-            let (port_name, baud) = serial_settings(&config, &args.serial)?;
-            let port = open_configured_port(&config, &port_name, baud)?;
-            serial::monitor(port)?;
+            if args.emulator.emulator {
+                let options = emulator_options(&config, &args.emulator, None)?;
+                attach_emulator(&options)?;
+            } else {
+                let (port_name, baud) = serial_settings(&config, &args.serial)?;
+                let port = open_configured_port(&config, &port_name, baud)?;
+                serial::monitor(port)?;
+            }
         }
         RoscoCommand::Run(args) => {
             let output = build::build(&project_root, &config, args.clean)?;
-            let (port_name, baud) = serial_settings(&config, &args.serial)?;
-            let mut port = open_configured_port(&config, &port_name, baud)?;
-            upload(&mut *port, &output.artifact, &config)?;
-            serial::monitor(port)?;
+
+            if args.emulator.emulator {
+                let options = emulator_options(&config, &args.emulator, Some(&output.artifact))?;
+                // We built this with the 68k toolchain, so we know what it
+                // can and cannot run on.
+                require_machine_family(&options.machine, emulator::Family::M68k)?;
+                attach_emulator(&options)?;
+            } else {
+                let (port_name, baud) = serial_settings(&config, &args.serial)?;
+                let mut port = open_configured_port(&config, &port_name, baud)?;
+                upload(&mut *port, &output.artifact, &config)?;
+                serial::monitor(port)?;
+            }
         }
         RoscoCommand::Ports(args) => print_ports(args.all)?,
         RoscoCommand::Doctor => doctor(&config)?,
     }
     Ok(())
+}
+
+fn emulator_options(
+    config: &Config,
+    args: &EmulatorArgs,
+    program_binary: Option<&Path>,
+) -> Result<EmulatorOptions> {
+    Ok(EmulatorOptions {
+        program: emulator::resolve_program(config, args.emulator_path.as_deref())?,
+        machine: args
+            .machine
+            .clone()
+            .unwrap_or_else(|| config.emulator.machine.clone()),
+        program_binary: program_binary.map(Path::to_path_buf),
+        rom_path: args
+            .rom_path
+            .clone()
+            .or_else(|| config.emulator.rom_path.clone()),
+        sd_card: args
+            .sd_card
+            .clone()
+            .or_else(|| config.emulator.sd_card.clone()),
+        extra_args: config.emulator.args.clone(),
+    })
+}
+
+fn attach_emulator(options: &EmulatorOptions) -> Result<()> {
+    if let Some(binary) = &options.program_binary {
+        eprintln!("Loading {} into {}", binary.display(), options.machine);
+    } else {
+        eprintln!("Starting {}", options.machine);
+    }
+
+    let session = emulator::start(options)?;
+    let stream = session.console()?;
+    // Time reads out so Ctrl-C is noticed promptly.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .context("could not set a read timeout on the emulator console")?;
+    let writer = session.console()?;
+
+    serial::console(Box::new(stream), Box::new(writer), ConsoleKind::Emulator)
+}
+
+/// Refuses a machine the artifact cannot possibly run on.
+///
+/// `upload` takes an arbitrary file and has no way to tell what it is, so it
+/// trusts the caller. `run` built the binary itself and does know.
+fn require_machine_family(machine: &str, expected: emulator::Family) -> Result<()> {
+    match emulator::family(machine) {
+        Some(family) if family == expected => Ok(()),
+        Some(family) => bail!(
+            "this project builds {expected} code, but {machine} is a {family} machine; \
+             set emulator.machine in rosco.toml or pass --machine"
+        ),
+        None => bail!("unknown machine {machine}; expected a rosco_m68k or rosco_6502 machine"),
+    }
 }
 
 fn resolve_init_destination(path: &Path) -> Result<PathBuf> {
@@ -219,6 +302,15 @@ fn doctor(config: &Config) -> Result<()> {
         probe_command("m68k-elf-rosco-gcc"),
     );
 
+    match emulator::resolve_program(config, None) {
+        Ok(program) => print_check(
+            "emulator",
+            &program.display().to_string(),
+            probe_emulator(&program),
+        ),
+        Err(error) => println!("[WARN] emulator: {error:#}"),
+    }
+
     match serial::list_ports() {
         Ok(ports) if ports.is_empty() => println!("[WARN] UART: no serial ports found"),
         Ok(ports) => {
@@ -236,6 +328,16 @@ fn doctor(config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn probe_emulator(program: &Path) -> bool {
+    Command::new(program)
+        .arg("-help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn docker_image_available(image: &str) -> bool {
@@ -283,6 +385,35 @@ mod tests {
             kind: kind.into(),
             is_usb,
         }
+    }
+
+    #[test]
+    fn a_68k_project_refuses_to_run_on_the_6502_machine() {
+        let error = require_machine_family("rosco_6502", emulator::Family::M68k)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("builds 68k code"), "{error}");
+        assert!(error.contains("rosco_6502"), "{error}");
+    }
+
+    #[test]
+    fn every_68k_variant_is_accepted_because_they_run_the_same_binary() {
+        for machine in [
+            "rosco_m68k_000",
+            "rosco_m68k_010",
+            "rosco_m68k_020",
+            "rosco_m68k_030",
+        ] {
+            require_machine_family(machine, emulator::Family::M68k).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_machine_is_rejected() {
+        let error = require_machine_family("commodore64", emulator::Family::M68k)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown machine"), "{error}");
     }
 
     #[test]
