@@ -14,6 +14,7 @@ use crate::config::{self, Board, Config, ProjectKind, Target, Toolchain, resolve
 use crate::emulator::{self, EmulatorOptions, Firmware};
 use crate::ihex::{self, HexOptions};
 use crate::init::{self, EmulatorSetup, ProjectPlan};
+use crate::install;
 use crate::kermit::KermitOptions;
 use crate::prompt::{self, Choice};
 use crate::serial::{self, ConsoleKind};
@@ -65,7 +66,12 @@ pub fn run(cli: Cli) -> Result<()> {
             if use_emulator(&config, &args.emulator)? {
                 // Nothing persists between emulator runs, so loading a
                 // binary and running it are the same thing.
-                let options = emulator_options(&config, &args.emulator, Some(&file))?;
+                let runner = install::ready(
+                    &config,
+                    Some(&project_root),
+                    args.emulator.emulator_path.as_deref(),
+                )?;
+                let options = emulator_options(&config, &args.emulator, Some(&file), runner)?;
                 attach_emulator(&options)?;
             } else {
                 let (port_name, baud) = serial_settings(&config, &args.serial)?;
@@ -78,7 +84,13 @@ pub fn run(cli: Cli) -> Result<()> {
                 // In a firmware project the machine is the project, so there
                 // is something to boot even with nothing to load into it.
                 let firmware = built_firmware(&config, &project_root)?;
-                let options = emulator_options(&config, &args.emulator, firmware.as_deref())?;
+                let runner = install::ready(
+                    &config,
+                    Some(&project_root),
+                    args.emulator.emulator_path.as_deref(),
+                )?;
+                let options =
+                    emulator_options(&config, &args.emulator, firmware.as_deref(), runner)?;
                 attach_emulator(&options)?;
             } else {
                 let (port_name, baud) = serial_settings(&config, &args.serial)?;
@@ -90,11 +102,23 @@ pub fn run(cli: Cli) -> Result<()> {
             // Resolved before the build so a bad flag fails in a second
             // rather than after a toolchain run.
             let emulator = use_emulator(&config, &args.emulator)?;
+            // Getting hold of an emulator can mean building one, which is not
+            // a conversation to start after a build the user has waited for.
+            let runner = emulator
+                .then(|| {
+                    install::ready(
+                        &config,
+                        Some(&project_root),
+                        args.emulator.emulator_path.as_deref(),
+                    )
+                })
+                .transpose()?;
             choose_toolchain(&mut config, &args.toolchain);
             let output = build::build(&project_root, &config, args.clean)?;
 
-            if emulator {
-                let options = emulator_options(&config, &args.emulator, Some(&output.artifact))?;
+            if let Some(runner) = runner {
+                let options =
+                    emulator_options(&config, &args.emulator, Some(&output.artifact), runner)?;
                 // We built this ourselves, so we know what the result can and
                 // cannot run on.
                 require_machine_family(
@@ -160,6 +184,7 @@ fn emulator_options(
     config: &Config,
     args: &EmulatorArgs,
     artifact: Option<&Path>,
+    runner: emulator::Runner,
 ) -> Result<EmulatorOptions> {
     let firmware = match config.project.kind {
         ProjectKind::Firmware => artifact.map(|image| Firmware {
@@ -169,7 +194,7 @@ fn emulator_options(
         ProjectKind::Program => None,
     };
     Ok(EmulatorOptions {
-        runner: emulator::resolve_runner(config, args.emulator_path.as_deref())?,
+        runner,
         machine: args
             .machine
             .clone()
@@ -800,11 +825,13 @@ fn doctor(config: &Config) -> Result<()> {
     }
 
     match emulator::resolve_runner(config, None) {
-        Ok(emulator::Runner::Program(program)) => print_check(
-            "emulator",
-            &program.display().to_string(),
-            probe_emulator(&program),
-        ),
+        Ok(emulator::Runner::Program(program)) => {
+            let found = install::locate(&program).is_some_and(|program| probe_emulator(&program));
+            print_check("emulator", &program.display().to_string(), found);
+            if !found {
+                println!("[ -- ] a run that needs the emulator offers to get one");
+            }
+        }
         // Nothing is downloaded to find out: an image that is not here yet is
         // pulled by the run that needs it.
         Ok(emulator::Runner::Image { name, .. }) => {
@@ -933,6 +960,7 @@ mod tests {
             &config,
             &EmulatorArgs::default(),
             Some(Path::new("/work/hello/hello.rom")),
+            emulator::Runner::Program("rosco-emulator".into()),
         )
         .unwrap();
 

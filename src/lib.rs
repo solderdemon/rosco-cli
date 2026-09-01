@@ -5,6 +5,7 @@ pub mod config;
 pub mod emulator;
 pub mod ihex;
 pub mod init;
+pub mod install;
 pub mod kermit;
 pub mod prompt;
 pub mod serial;

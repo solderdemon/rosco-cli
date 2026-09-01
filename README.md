@@ -267,6 +267,10 @@ There are two settings files:
 - the project's `rosco.toml`, for what belongs to the application: its artifact,
   its builder, its machine. Write to it with `--local`.
 
+An emulator the CLI builds for you goes beside neither, in
+`$XDG_DATA_HOME/rosco` (`~/.local/share/rosco` by default) or
+`%LOCALAPPDATA%\rosco`, which `ROSCO_DATA_HOME` overrides.
+
 The project file wins over the per-user one, key by key, and command-line
 options win over both. Only write a setting into `rosco.toml` when the project
 really does need its own value: one repeated from the defaults pins it there
@@ -480,6 +484,44 @@ the same file.
 
 Firmware ROMs are taken from `roms/` next to the emulator binary unless
 `--rom-path` or `emulator.rom_path` says otherwise.
+
+### When there is no emulator
+
+A run that needs the emulator and cannot find one asks what to do about it
+instead of failing:
+
+```text
+The emulator is not ready
+
+  rosco-emulator is not on PATH, and no emulator is saved in the settings.
+
+? Emulator
+  > Docker          run its image; nothing to install
+    Build it here   clone the emulator and build it, which takes a while
+    Existing build  point at an emulator already on this computer
+    Cancel          stop, and print how to set one up later
+```
+
+**Docker** checks that Docker itself answers and then runs the image, which is
+pulled by the run that follows. **Build it here** clones
+[the emulator](https://github.com/solderdemon/rosco-emulator) into a directory
+you choose and builds it, after saying what that costs: it is a MAME tree, so
+the checkout is large and the build takes tens of minutes. It names anything
+the build needs and is missing rather than failing halfway through, and its
+releases carry prebuilt Linux binaries for anyone who would rather not build.
+**Existing build** takes a path, and accepts the emulator's source tree as well
+as the binary in it.
+
+Whichever is chosen is saved, so the question is asked once: in `rosco.toml`
+if this project pins the same setting, and in the user settings otherwise. The
+same question comes up when `emulator.source = "docker"` but Docker is not
+installed or is not running, and there the build on this computer is the answer
+offered first.
+
+Nothing is asked where there is no terminal to ask in - a script or a CI job
+gets the same options as one message and a non-zero exit - and a wrong
+`--emulator-path` is reported rather than turned into a conversation, since it
+is an answer to this question already.
 
 ### The emulator in Docker
 

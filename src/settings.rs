@@ -55,6 +55,42 @@ pub fn run(project_root: Option<&Path>, command: ConfigCommand) -> Result<()> {
     }
 }
 
+/// Records answers given somewhere other than `rosco config`, and says where
+/// they went.
+///
+/// They belong to this workstation, so the user's file is where they go -
+/// unless this project pins one of the same settings, where a global value
+/// would be written and then never read.
+pub fn remember(project_root: Option<&Path>, settings: &[(&str, String)]) -> Result<PathBuf> {
+    let keys: Vec<&str> = settings.iter().map(|(key, _)| *key).collect();
+    let path = match project_root.map(|root| root.join(CONFIG_FILE)) {
+        Some(project) if pins(&project, &keys) => project,
+        _ => config::global_config_path()?,
+    };
+    for (key, value) in settings {
+        set(&path, key, value)?;
+    }
+    Ok(path)
+}
+
+/// Whether a settings file gives any of these keys a value of its own.
+fn pins(path: &Path, keys: &[&str]) -> bool {
+    let Ok(document) = read_document(path) else {
+        return false;
+    };
+    keys.iter().any(|key| {
+        let (parents, leaf) = split_key(key);
+        let mut table = document.as_table();
+        for parent in parents {
+            match table.get(parent).and_then(Item::as_table) {
+                Some(child) => table = child,
+                None => return false,
+            }
+        }
+        table.contains_key(leaf)
+    })
+}
+
 fn scope_path(scope: Scope, project_root: Option<&Path>) -> Result<PathBuf> {
     match scope {
         Scope::Global => config::global_config_path(),
@@ -358,6 +394,36 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "[serial]\nport = \"/dev/ttyUSB0\"\n"
         );
+    }
+
+    #[test]
+    fn an_answer_goes_to_the_project_when_the_project_pins_that_setting() {
+        let (dir, path) = file("[emulator]\nprogram = \"/nope/rosco\"\n");
+
+        assert!(pins(&path, &["emulator.program"]));
+        let written = remember(
+            Some(dir.path()),
+            &[("emulator.program", "/opt/rosco/rosco".to_string())],
+        )
+        .unwrap();
+
+        assert_eq!(written, path);
+        let config: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            config.emulator.program.as_deref(),
+            Some(Path::new("/opt/rosco/rosco"))
+        );
+    }
+
+    #[test]
+    fn a_project_that_says_nothing_about_a_setting_leaves_it_to_the_user_file() {
+        let (dir, path) = file("[project]\nboard = \"rosco_6502\"\n");
+
+        assert!(!pins(&path, &["emulator.program", "emulator.source"]));
+        assert!(!pins(
+            dir.path().join("absent.toml").as_path(),
+            &["emulator.program"]
+        ));
     }
 
     #[test]

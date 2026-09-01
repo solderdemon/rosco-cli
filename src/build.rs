@@ -176,7 +176,7 @@ fn container_path(workspace: &str, directory: &Path) -> String {
 }
 
 /// What asking Docker for itself told us.
-enum Probe {
+pub enum Probe {
     Ready,
     Missing,
     Refused(String),
@@ -185,7 +185,7 @@ enum Probe {
 /// Checked before the first container starts, so a missing or stopped Docker
 /// is one clear sentence instead of a failed `docker run`.
 pub fn ensure_docker_available() -> Result<()> {
-    match probe()? {
+    match docker_probe()? {
         Probe::Ready => Ok(()),
         Probe::Missing => bail!("{NO_DOCKER}"),
         Probe::Refused(stderr) => bail!("{}", refusal_message(&stderr)),
@@ -228,7 +228,9 @@ pub fn docker_image_available(image: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn probe() -> Result<Probe> {
+/// Whether Docker would answer, and when it would not, why. The emulator asks
+/// this too, and offers something else instead of insisting on it.
+pub fn docker_probe() -> Result<Probe> {
     let output = Command::new("docker")
         .arg("info")
         .stdin(Stdio::null())
@@ -249,7 +251,7 @@ const NO_DOCKER: &str = "docker is not installed, or is not on PATH.\n  The tool
 
 /// Docker is installed but would not answer. Its own words say why far better
 /// than a guess would, so they are quoted and only the remedy is added.
-fn refusal_message(stderr: &str) -> String {
+pub fn refusal_message(stderr: &str) -> String {
     let (headline, remedy) = if stderr.contains("permission denied") {
         (
             "docker is installed but this user cannot reach its daemon.",

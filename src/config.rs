@@ -12,6 +12,7 @@ pub const CONFIG_FILE: &str = "rosco.toml";
 pub const GLOBAL_CONFIG_FILE: &str = "config.toml";
 /// Overrides the directory holding the per-user settings file.
 pub const CONFIG_HOME_ENV: &str = "ROSCO_CONFIG_HOME";
+pub const DATA_HOME_ENV: &str = "ROSCO_DATA_HOME";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -395,6 +396,32 @@ pub fn global_config_path() -> Result<PathBuf> {
     };
 
     Ok(dir.join("rosco").join(GLOBAL_CONFIG_FILE))
+}
+
+/// Where things too large for a settings file go, which so far means an
+/// emulator built here. `ROSCO_DATA_HOME` wins, as it does for the settings.
+pub fn data_dir() -> Result<PathBuf> {
+    if let Some(dir) = non_empty_var(DATA_HOME_ENV) {
+        return Ok(PathBuf::from(dir));
+    }
+
+    let dir = if cfg!(windows) {
+        PathBuf::from(non_empty_var("LOCALAPPDATA").context(
+            "could not locate a directory to install into; LOCALAPPDATA is unset. \
+             Set ROSCO_DATA_HOME to choose one.",
+        )?)
+    } else if let Some(base) = non_empty_var("XDG_DATA_HOME") {
+        PathBuf::from(base)
+    } else {
+        PathBuf::from(non_empty_var("HOME").context(
+            "could not locate a directory to install into; HOME is unset. \
+             Set ROSCO_DATA_HOME to choose one.",
+        )?)
+        .join(".local")
+        .join("share")
+    };
+
+    Ok(dir.join("rosco"))
 }
 
 fn non_empty_var(name: &str) -> Option<std::ffi::OsString> {

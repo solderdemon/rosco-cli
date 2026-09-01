@@ -12,12 +12,13 @@ src/main.rs + cli.rs        parse command and render top-level errors
      /    |    \
     v     v     v
 init.rs  build.rs  serial.rs, emulator.rs
-prompt.rs   |          |
-            v          v
-     toolchain.rs   kermit.rs, ihex.rs
-     compilers and  one transfer protocol
-     what installs  per board
-     them
+prompt.rs   |          |             |
+            v          v             v
+     toolchain.rs   kermit.rs,    install.rs
+     compilers and  ihex.rs       getting an emulator
+     what installs  one transfer  when there is none
+     them           protocol
+                    per board
 
       config.rs             project policy consumed by the use cases
 ```
@@ -59,6 +60,10 @@ prompt.rs   |          |
   place the two project types take different paths through the emulator. The two differ only in what
   the paths look like to whatever runs the emulator, so both go through one
   argument builder and one layout of what it was handed.
+- `install` owns what happens when there is no emulator to run: it turns that
+  into the choice between the image, a build already here, and one it clones
+  and builds, and records the answer in whichever settings file will be read
+  back. `emulator` itself stays out of this - it starts what it is handed.
 - `config` validates `rosco.toml` and rejects unknown keys so typos do not fail
   silently. The board is resolved first, and what it implies - toolchain image,
   emulated machine - is layered underneath both settings files, so a project or

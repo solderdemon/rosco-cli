@@ -191,12 +191,9 @@ fn start_here(options: &EmulatorOptions, program: &Path) -> Result<EmulatorSessi
     let child = command.spawn().with_context(|| {
         let _ = std::fs::remove_dir_all(&scratch);
         format!(
-            "could not start the emulator {}; \
-             point --emulator-path, emulator.program in {}, or {} at it, or run it from \
-             the image with `rosco config set emulator.source docker`",
+            "could not start the emulator {}; check that it is there and can run, or take \
+             one from the image with `rosco config set emulator.source docker`",
             program.display(),
-            crate::config::CONFIG_FILE,
-            PROGRAM_ENV,
         )
     })?;
 
@@ -775,7 +772,7 @@ fn absolute_arg(path: &Path) -> OsString {
     absolute(path).into_os_string()
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
