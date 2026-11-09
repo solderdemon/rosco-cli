@@ -48,8 +48,8 @@ Make sure Cargo's binary directory (`$HOME/.cargo/bin` on Linux or
 Bump `version` in `Cargo.toml`, commit, then push a matching tag:
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The `Release` workflow builds every target, and publishes the archives and the
