@@ -1,9 +1,9 @@
 use std::io::{ErrorKind, IsTerminal, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType, StopBits};
 
 #[derive(Clone, Debug)]
@@ -101,11 +101,136 @@ impl ConsoleKind {
     }
 }
 
-pub fn monitor(port: Box<dyn SerialPort>) -> Result<()> {
+pub fn monitor(port: Box<dyn SerialPort>, watch: &Watch) -> Result<()> {
     let writer = port
         .try_clone()
         .context("could not clone serial port for interactive input")?;
-    console(port, Box::new(writer), ConsoleKind::Uart)
+    console(port, Box::new(writer), ConsoleKind::Uart, watch)
+}
+
+/// What to watch the console for, so a session can end by itself and say
+/// whether the program did what it should.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Watch {
+    /// Text whose appearance means the program worked.
+    pub expect: Option<String>,
+    /// Text whose appearance means it did not.
+    pub fail_on: Option<String>,
+    /// How long the session may last.
+    pub timeout: Option<Duration>,
+}
+
+/// How long `--expect` waits when no `--timeout` says otherwise: a CI job
+/// that hangs forever on a program that never answers is worse than one
+/// that fails.
+pub const DEFAULT_EXPECT_TIMEOUT: Duration = Duration::from_secs(60);
+
+impl Watch {
+    pub fn new(expect: Option<String>, fail_on: Option<String>, seconds: Option<u64>) -> Self {
+        let timeout = match (seconds, &expect) {
+            (Some(seconds), _) => Some(Duration::from_secs(seconds)),
+            (None, Some(_)) => Some(DEFAULT_EXPECT_TIMEOUT),
+            (None, None) => None,
+        };
+        Self {
+            expect,
+            fail_on,
+            timeout,
+        }
+    }
+
+    fn is_set(&self) -> bool {
+        self.expect.is_some() || self.fail_on.is_some() || self.timeout.is_some()
+    }
+
+    fn describe(&self) -> Option<String> {
+        let timeout = self.timeout.map(|limit| format!("{} s", limit.as_secs()));
+        match (&self.expect, timeout) {
+            (Some(text), Some(limit)) => Some(format!("Waiting up to {limit} for {text:?}.")),
+            (Some(text), None) => Some(format!("Waiting for {text:?}.")),
+            (None, Some(limit)) => Some(format!("Stopping after {limit}.")),
+            (None, None) => None,
+        }
+    }
+}
+
+/// How a watched session ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Verdict {
+    Expected,
+    FailedOn,
+}
+
+/// Looks for the watched text in what the machine prints, across however
+/// many reads it arrives in and with the firmware's colour escapes removed.
+struct Watcher {
+    watch: Watch,
+    recent: Vec<u8>,
+    started: Instant,
+}
+
+/// How much of the console is kept to match against. A pattern split across
+/// reads is still found, while a long session does not grow without limit.
+const WATCH_WINDOW: usize = 16 * 1024;
+
+impl Watcher {
+    fn new(watch: Watch) -> Self {
+        Self {
+            watch,
+            recent: Vec::new(),
+            started: Instant::now(),
+        }
+    }
+
+    fn feed(&mut self, output: &[u8]) -> Option<Verdict> {
+        if self.watch.expect.is_none() && self.watch.fail_on.is_none() {
+            return None;
+        }
+        self.recent.extend_from_slice(output);
+        if self.recent.len() > WATCH_WINDOW {
+            let excess = self.recent.len() - WATCH_WINDOW;
+            self.recent.drain(..excess);
+        }
+
+        let text = crate::emulator::strip_ansi(&String::from_utf8_lossy(&self.recent));
+        // A failure printed in the same read as the success still counts.
+        if let Some(fail) = &self.watch.fail_on
+            && text.contains(fail.as_str())
+        {
+            return Some(Verdict::FailedOn);
+        }
+        if let Some(expect) = &self.watch.expect
+            && text.contains(expect.as_str())
+        {
+            return Some(Verdict::Expected);
+        }
+        None
+    }
+
+    fn timed_out(&self) -> bool {
+        self.watch
+            .timeout
+            .is_some_and(|limit| self.started.elapsed() >= limit)
+    }
+
+    /// The result of a session that ended without the watched text: by
+    /// timing out, the machine going away, or Ctrl-].
+    fn ended(&self, how: &str) -> Result<()> {
+        match &self.watch.expect {
+            Some(text) => bail!("{how} before the machine printed {text:?}"),
+            None => Ok(()),
+        }
+    }
+
+    fn concluded(&self, verdict: Verdict) -> Result<()> {
+        match verdict {
+            Verdict::Expected => Ok(()),
+            Verdict::FailedOn => bail!(
+                "the machine printed {:?}",
+                self.watch.fail_on.as_deref().unwrap_or_default()
+            ),
+        }
+    }
 }
 
 /// Drives an interactive session over anything that reads and writes bytes.
@@ -113,8 +238,14 @@ pub fn console(
     mut reader: Box<dyn Read + Send>,
     mut writer: Box<dyn Write + Send>,
     kind: ConsoleKind,
+    watch: &Watch,
 ) -> Result<()> {
     eprintln!("{}", kind.banner());
+    if let Some(description) = watch.describe() {
+        eprintln!("{description}");
+    }
+    let mut watcher = Watcher::new(watch.clone());
+    let mut outcome = None;
 
     let raw_guard = RawModeGuard::enter()?;
     let is_raw = raw_guard.active;
@@ -154,10 +285,15 @@ pub fn console(
     let mut last_was_cr = false;
 
     while running.load(Ordering::SeqCst) {
+        if watcher.timed_out() {
+            outcome = Some(End::TimedOut);
+            break;
+        }
         match reader.read(&mut buffer) {
             Ok(0) => {
                 // A serial port simply had nothing to say; a socket is closed.
                 if kind == ConsoleKind::Emulator {
+                    outcome = Some(End::Closed);
                     break;
                 }
             }
@@ -169,6 +305,11 @@ pub fn console(
                     let _ = stdout.write_all(&buffer[..count]);
                 }
                 let _ = stdout.flush();
+
+                if let Some(verdict) = watcher.feed(&buffer[..count]) {
+                    outcome = Some(End::Watched(verdict));
+                    break;
+                }
             }
             Err(error)
                 if matches!(
@@ -183,11 +324,30 @@ pub fn console(
         }
     }
 
+    running.store(false, Ordering::SeqCst);
     drop(raw_guard);
     eprintln!("{}", kind.closing());
     let _ = stdin_thread;
 
-    Ok(())
+    if !watch.is_set() {
+        return Ok(());
+    }
+    match outcome {
+        Some(End::Watched(verdict)) => watcher.concluded(verdict),
+        Some(End::TimedOut) => watcher.ended(&format!(
+            "{} s passed",
+            watch.timeout.unwrap_or_default().as_secs()
+        )),
+        Some(End::Closed) => watcher.ended("the emulator stopped"),
+        None => watcher.ended("the session was closed"),
+    }
+}
+
+/// Why the console loop stopped, when it was not the user leaving.
+enum End {
+    Watched(Verdict),
+    TimedOut,
+    Closed,
 }
 
 /// Ctrl-], the byte that ends a session. Ctrl-C is not it: in raw mode it is
@@ -232,6 +392,61 @@ mod tests {
     fn ctrl_close_bracket_ends_the_session_after_what_came_before_it() {
         assert_eq!(split_at_quit(b"ls\r\x1dmore"), (&b"ls\r"[..], true));
         assert_eq!(split_at_quit(b"\x1d"), (&b""[..], true));
+    }
+
+    fn watcher(expect: Option<&str>, fail_on: Option<&str>) -> Watcher {
+        Watcher::new(Watch::new(
+            expect.map(str::to_string),
+            fail_on.map(str::to_string),
+            None,
+        ))
+    }
+
+    #[test]
+    fn expected_text_is_found_across_reads_and_colour_escapes() {
+        let mut watcher = watcher(Some("All tests passed"), None);
+        assert_eq!(watcher.feed(b"All te"), None);
+        assert_eq!(watcher.feed(b"sts \x1b[1;32mpas"), None);
+        assert_eq!(watcher.feed(b"sed\r\n"), Some(Verdict::Expected));
+    }
+
+    #[test]
+    fn a_failure_wins_over_a_success_in_the_same_read() {
+        let mut watcher = watcher(Some("PASS"), Some("FAIL"));
+        assert_eq!(
+            watcher.feed(b"FAIL 1\r\nPASS 2\r\n"),
+            Some(Verdict::FailedOn)
+        );
+        assert!(watcher.concluded(Verdict::FailedOn).is_err());
+    }
+
+    #[test]
+    fn ending_without_the_expected_text_is_a_failure() {
+        let watcher = watcher(Some("PASS"), None);
+        let error = watcher.ended("5 s passed").unwrap_err().to_string();
+        assert!(error.contains("PASS"), "{error}");
+    }
+
+    #[test]
+    fn a_plain_timeout_is_not_a_failure() {
+        let watch = Watch::new(None, None, Some(5));
+        assert_eq!(watch.timeout, Some(Duration::from_secs(5)));
+        assert!(Watcher::new(watch).ended("5 s passed").is_ok());
+    }
+
+    #[test]
+    fn expect_without_a_timeout_still_gives_up_eventually() {
+        let watch = Watch::new(Some("PASS".into()), None, None);
+        assert_eq!(watch.timeout, Some(DEFAULT_EXPECT_TIMEOUT));
+        assert_eq!(Watch::new(None, None, None).timeout, None);
+    }
+
+    #[test]
+    fn the_window_keeps_the_end_of_a_long_session() {
+        let mut watcher = watcher(Some("DONE"), None);
+        assert_eq!(watcher.feed(&vec![b'.'; WATCH_WINDOW * 2]), None);
+        assert!(watcher.recent.len() <= WATCH_WINDOW);
+        assert_eq!(watcher.feed(b"DONE"), Some(Verdict::Expected));
     }
 
     #[test]

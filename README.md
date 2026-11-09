@@ -398,7 +398,9 @@ To use an image built from your local `rosco_m68k_docker` or
 - `rosco upload [FILE]` — transfer a binary to the board, or load it into the
   emulator with `--emulator`.
 - `rosco monitor` — open an interactive UART session (press Ctrl-] to exit).
-- `rosco run [--clean]` — build, upload, and open an interactive UART session.
+- `rosco run [--clean]` — build, upload, and open an interactive UART session;
+  `--expect`, `--fail-on` and `--timeout` end it by themselves with a pass or
+  a fail.
 - `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
   `--all` also shows built-in and non-USB serial ports.
 - `rosco config <list|get|set|unset|path|edit>` — read and write saved
@@ -469,6 +471,34 @@ debugger, run its binary directly.
 
 Other options: `--sd-card IMAGE` attaches an SD card and `--rom-path DIR` points
 at a different firmware set.
+
+### Checking a program from a script or CI
+
+A console session normally lasts until you leave it. `--expect` makes it end
+by itself, as soon as the machine prints a given line, and turns the run into
+a pass or a fail:
+
+```sh
+rosco run --emulator --expect "All tests passed"
+rosco run --emulator --expect "All tests passed" --fail-on "FAILED" --timeout 20
+rosco monitor --emulator --expect "Memory checks: passed"   # just the firmware
+```
+
+| Ends because | Exit status |
+| --- | --- |
+| the `--expect` text was printed | 0 |
+| the `--fail-on` text was printed | 1 |
+| `--timeout` ran out, or the emulator stopped, before the `--expect` text | 1 |
+| `--timeout` ran out and nothing was expected | 0 |
+
+The text is matched with the firmware's colour escapes removed, and however
+many reads it arrives in. `--expect` gives up after 60 seconds unless
+`--timeout` says otherwise, so a program that never answers fails the job
+rather than hanging it. Everything the machine prints is still shown, so the
+job log has the whole session.
+
+The same options work with a board, on `rosco run --hardware` and
+`rosco monitor`.
 
 ### Which machine a project runs on
 

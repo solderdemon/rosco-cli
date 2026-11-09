@@ -131,6 +131,9 @@ pub struct UploadArgs {
 
     #[command(flatten)]
     pub emulator: EmulatorArgs,
+
+    #[command(flatten)]
+    pub watch: WatchArgs,
 }
 
 #[derive(Debug, Args)]
@@ -140,6 +143,9 @@ pub struct MonitorArgs {
 
     #[command(flatten)]
     pub emulator: EmulatorArgs,
+
+    #[command(flatten)]
+    pub watch: WatchArgs,
 }
 
 #[derive(Debug, Args)]
@@ -156,6 +162,34 @@ pub struct RunArgs {
 
     #[command(flatten)]
     pub emulator: EmulatorArgs,
+
+    #[command(flatten)]
+    pub watch: WatchArgs,
+}
+
+/// Watching the console for an answer, so a session can end on its own and
+/// say whether the program worked - which is what a script or CI job needs.
+#[derive(Clone, Debug, Default, Args)]
+pub struct WatchArgs {
+    /// End the session successfully once the machine prints TEXT; fail if it
+    /// never does.
+    #[arg(long, value_name = "TEXT")]
+    pub expect: Option<String>,
+
+    /// Fail as soon as the machine prints TEXT.
+    #[arg(long, value_name = "TEXT")]
+    pub fail_on: Option<String>,
+
+    /// End the session after this many seconds. With --expect it defaults
+    /// to 60, and running out of time is a failure.
+    #[arg(long, value_name = "SECONDS")]
+    pub timeout: Option<u64>,
+}
+
+impl WatchArgs {
+    pub fn is_set(&self) -> bool {
+        self.expect.is_some() || self.fail_on.is_some() || self.timeout.is_some()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -294,6 +328,29 @@ mod tests {
             panic!("expected ports command");
         };
         assert!(args.all);
+    }
+
+    #[test]
+    fn run_can_wait_for_an_answer() {
+        let cli = Cli::try_parse_from([
+            "rosco",
+            "run",
+            "--emulator",
+            "--expect",
+            "PASS",
+            "--fail-on",
+            "FAIL",
+            "--timeout",
+            "5",
+        ])
+        .unwrap();
+        let RoscoCommand::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(args.watch.expect.as_deref(), Some("PASS"));
+        assert_eq!(args.watch.fail_on.as_deref(), Some("FAIL"));
+        assert_eq!(args.watch.timeout, Some(5));
+        assert!(args.watch.is_set());
     }
 
     #[test]

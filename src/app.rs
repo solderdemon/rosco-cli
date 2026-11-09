@@ -9,6 +9,7 @@ use serialport::SerialPort;
 use crate::build;
 use crate::cli::{
     Cli, EmulatorArgs, InitArgs, ProjectLanguage, RoscoCommand, SerialArgs, ToolchainArgs,
+    WatchArgs,
 };
 use crate::config::{self, Board, Config, ProjectKind, Target, Toolchain, resolve_from};
 use crate::emulator::{self, EmulatorOptions, Firmware};
@@ -72,8 +73,15 @@ pub fn run(cli: Cli) -> Result<()> {
                     args.emulator.emulator_path.as_deref(),
                 )?;
                 let options = emulator_options(&config, &args.emulator, Some(&file), runner)?;
-                attach_emulator(&options)?;
+                attach_emulator(&options, &watch(&args.watch))?;
             } else {
+                if args.watch.is_set() {
+                    bail!(
+                        "--expect, --fail-on and --timeout watch the console, which `upload` \
+                         only opens in the emulator; use `rosco run` to upload to a board \
+                         and watch it"
+                    );
+                }
                 let (port_name, baud) = serial_settings(&config, &args.serial)?;
                 let mut port = open_configured_port(&config, &port_name, baud)?;
                 upload(&mut *port, &file, &config)?;
@@ -91,11 +99,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 )?;
                 let options =
                     emulator_options(&config, &args.emulator, firmware.as_deref(), runner)?;
-                attach_emulator(&options)?;
+                attach_emulator(&options, &watch(&args.watch))?;
             } else {
                 let (port_name, baud) = serial_settings(&config, &args.serial)?;
                 let port = open_configured_port(&config, &port_name, baud)?;
-                serial::monitor(port)?;
+                serial::monitor(port, &watch(&args.watch))?;
             }
         }
         RoscoCommand::Run(args) => {
@@ -125,12 +133,12 @@ pub fn run(cli: Cli) -> Result<()> {
                     &options.machine,
                     emulator::board_family(config.project.board),
                 )?;
-                attach_emulator(&options)?;
+                attach_emulator(&options, &watch(&args.watch))?;
             } else {
                 let (port_name, baud) = serial_settings(&config, &args.serial)?;
                 let mut port = open_configured_port(&config, &port_name, baud)?;
                 upload(&mut *port, &output.artifact, &config)?;
-                serial::monitor(port)?;
+                serial::monitor(port, &watch(&args.watch))?;
             }
         }
         RoscoCommand::Ports(args) => print_ports(args.all)?,
@@ -216,7 +224,11 @@ fn emulator_options(
     })
 }
 
-fn attach_emulator(options: &EmulatorOptions) -> Result<()> {
+fn watch(args: &WatchArgs) -> serial::Watch {
+    serial::Watch::new(args.expect.clone(), args.fail_on.clone(), args.timeout)
+}
+
+fn attach_emulator(options: &EmulatorOptions, watch: &serial::Watch) -> Result<()> {
     if let Some(firmware) = &options.firmware {
         eprintln!(
             "Starting {} on {}",
@@ -237,7 +249,12 @@ fn attach_emulator(options: &EmulatorOptions) -> Result<()> {
         .context("could not set a read timeout on the emulator console")?;
     let writer = session.console()?;
 
-    serial::console(Box::new(stream), Box::new(writer), ConsoleKind::Emulator)
+    serial::console(
+        Box::new(stream),
+        Box::new(writer),
+        ConsoleKind::Emulator,
+        watch,
+    )
 }
 
 /// The firmware a project has already built, for the commands that do not

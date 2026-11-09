@@ -40,7 +40,10 @@ prompt.rs   |          |             |
   `doctor` reports on them.
 - `serial` owns host-specific serial discovery/opening behind `serialport`'s
   cross-platform trait. All connections are 8-N-1 with no flow control so
-  binary upload remains 8-bit clean.
+  binary upload remains 8-bit clean. It also owns the console session that
+  the UART and the emulator share, and the watcher that ends one on
+  `--expect`, `--fail-on` or `--timeout`, so both targets pass or fail a
+  scripted run the same way.
 - `kermit` owns packet encoding, negotiation, checksums, retries, and transfer
   progress for rosco_m68k. It has no CLI or UI dependency.
 - `ihex` owns the rosco_6502 equivalent: Intel hex records, the EWozMon
