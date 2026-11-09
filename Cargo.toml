@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Build, upload, and monitor programs for rosco_m68k"
 license = "MIT"
+repository = "https://github.com/solderdemon/rosco-cli"
 
 [[bin]]
 name = "rosco"
@@ -24,6 +25,11 @@ toml_edit = "0.25"
 [profile.release]
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [dev-dependencies]
 tempfile = "3.27.0"
