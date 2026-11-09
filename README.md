@@ -273,7 +273,9 @@ rosco run --port /dev/ttyUSB0
 
 On Windows, use a port such as `COM3`. UART defaults to 38400 baud, 8 data bits,
 no parity, one stop bit, and no flow control. `rosco monitor` opens a bidirectional
-interactive UART session with terminal raw mode (press `Ctrl-C` to exit).
+interactive UART session with terminal raw mode. Press `Ctrl-]` to exit;
+`Ctrl-C` is sent to the board like any other key, so a program waiting for it
+gets it.
 
 Use `-C` to work with another project directory:
 
@@ -395,7 +397,7 @@ To use an image built from your local `rosco_m68k_docker` or
   validate the artifact.
 - `rosco upload [FILE]` — transfer a binary to the board, or load it into the
   emulator with `--emulator`.
-- `rosco monitor` — open an interactive UART session (press Ctrl-C to exit).
+- `rosco monitor` — open an interactive UART session (press Ctrl-] to exit).
 - `rosco run [--clean]` — build, upload, and open an interactive UART session.
 - `rosco ports [--all]` — list USB-UART candidates and their USB metadata;
   `--all` also shows built-in and non-USB serial ports.

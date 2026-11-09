@@ -231,7 +231,7 @@ fn attach_emulator(options: &EmulatorOptions) -> Result<()> {
 
     let session = emulator::start(options)?;
     let stream = session.console()?;
-    // Time reads out so Ctrl-C is noticed promptly.
+    // Time reads out so Ctrl-] is noticed promptly.
     stream
         .set_read_timeout(Some(Duration::from_millis(50)))
         .context("could not set a read timeout on the emulator console")?;

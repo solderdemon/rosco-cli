@@ -88,8 +88,8 @@ pub enum ConsoleKind {
 impl ConsoleKind {
     fn banner(self) -> &'static str {
         match self {
-            Self::Uart => "Interactive UART session; press Ctrl-C to exit.",
-            Self::Emulator => "Emulator console; press Ctrl-C to exit.",
+            Self::Uart => "Interactive UART session; press Ctrl-] to exit.",
+            Self::Emulator => "Emulator console; press Ctrl-] to exit.",
         }
     }
 
@@ -132,17 +132,17 @@ pub fn console(
                 // machine boot, so its end only stops forwarding input.
                 Ok(0) => return,
                 Ok(count) => {
-                    for &byte in &buffer[..count] {
-                        if byte == 0x03 || byte == 0x1d {
-                            running_writer.store(false, Ordering::SeqCst);
+                    let (forward, quit) = split_at_quit(&buffer[..count]);
+                    if !forward.is_empty() {
+                        if writer.write_all(forward).is_err() {
                             return;
                         }
+                        let _ = writer.flush();
                     }
-
-                    if writer.write_all(&buffer[..count]).is_err() {
+                    if quit {
+                        running_writer.store(false, Ordering::SeqCst);
                         return;
                     }
-                    let _ = writer.flush();
                 }
                 Err(_) => return,
             }
@@ -163,14 +163,8 @@ pub fn console(
             }
             Ok(count) => {
                 if is_raw {
-                    for &byte in &buffer[..count] {
-                        if byte == b'\n' && !last_was_cr {
-                            let _ = stdout.write_all(b"\r\n");
-                        } else {
-                            let _ = stdout.write_all(&[byte]);
-                        }
-                        last_was_cr = byte == b'\r';
-                    }
+                    let shown = raw_newlines(&buffer[..count], &mut last_was_cr);
+                    let _ = stdout.write_all(&shown);
                 } else {
                     let _ = stdout.write_all(&buffer[..count]);
                 }
@@ -194,4 +188,62 @@ pub fn console(
     let _ = stdin_thread;
 
     Ok(())
+}
+
+/// Ctrl-], the byte that ends a session. Ctrl-C is not it: in raw mode it is
+/// an ordinary byte, and the program on the board may be waiting for it.
+const QUIT: u8 = 0x1d;
+
+/// What of a chunk of keyboard input goes to the machine, and whether the
+/// session ends after it. Anything typed before Ctrl-] is still sent.
+fn split_at_quit(input: &[u8]) -> (&[u8], bool) {
+    match input.iter().position(|&byte| byte == QUIT) {
+        Some(end) => (&input[..end], true),
+        None => (input, false),
+    }
+}
+
+/// Turns the bare line feeds a machine prints into CR LF, which a terminal in
+/// raw mode needs to start the next line at its left edge. A CR LF the
+/// machine sent itself is left as it is, even when a read splits the pair.
+fn raw_newlines(output: &[u8], last_was_cr: &mut bool) -> Vec<u8> {
+    let mut shown = Vec::with_capacity(output.len());
+    for &byte in output {
+        if byte == b'\n' && !*last_was_cr {
+            shown.extend_from_slice(b"\r\n");
+        } else {
+            shown.push(byte);
+        }
+        *last_was_cr = byte == b'\r';
+    }
+    shown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_c_is_passed_to_the_machine() {
+        assert_eq!(split_at_quit(b"abc\x03"), (&b"abc\x03"[..], false));
+    }
+
+    #[test]
+    fn ctrl_close_bracket_ends_the_session_after_what_came_before_it() {
+        assert_eq!(split_at_quit(b"ls\r\x1dmore"), (&b"ls\r"[..], true));
+        assert_eq!(split_at_quit(b"\x1d"), (&b""[..], true));
+    }
+
+    #[test]
+    fn bare_line_feeds_become_cr_lf() {
+        let mut last_was_cr = false;
+        assert_eq!(raw_newlines(b"a\nb\n", &mut last_was_cr), b"a\r\nb\r\n");
+    }
+
+    #[test]
+    fn a_cr_lf_split_across_reads_is_not_doubled() {
+        let mut last_was_cr = false;
+        assert_eq!(raw_newlines(b"line\r", &mut last_was_cr), b"line\r");
+        assert_eq!(raw_newlines(b"\nnext", &mut last_was_cr), b"\nnext");
+    }
 }
